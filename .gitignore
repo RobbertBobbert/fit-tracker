@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+training_venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Django
+*.log
+*.pot
+*.pyc
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+/media
+/static
+
+# PostgreSQL (локальная конфигурация)
+.pgdata/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Миграции (опционально — можно включить, если хочешь хранить их в гите)
+# !*/migrations/__init__.py
+*/migrations/*.py
+!*/migrations/__init__.py
+
+# Секреты
+.env
+config.local.py
+secrets.json
