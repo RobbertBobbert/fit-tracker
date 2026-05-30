@@ -1,0 +1,593 @@
+<!-- templates/training_django_app/add_dish.html -->
+{% extends 'training_django_app/base.html' %}
+
+{% block title %}Создать блюдо{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>🍲 Создать новое блюдо</h2>
+    
+    <form id="dishForm">
+        {% csrf_token %}
+        
+        <!-- Название блюда -->
+        <div class="form-group">
+            <label for="dishName">Название блюда *</label>
+            <input type="text" id="dishName" name="name" class="form-control" required placeholder="Например: Овсянка с яблоком">
+        </div>
+        
+        <!-- Блок КБЖУ -->
+        <div class="nutrition-block">
+            <h3>📊 Пищевая ценность (на 100г)</h3>
+            <div class="nutrition-grid">
+                <div class="nutrition-item">
+                    <span class="nutrition-label">🥩 Белки:</span>
+                    <span id="totalProtein" class="nutrition-value">0</span> г
+                </div>
+                <div class="nutrition-item">
+                    <span class="nutrition-label">🧈 Жиры:</span>
+                    <span id="totalFat" class="nutrition-value">0</span> г
+                </div>
+                <div class="nutrition-item">
+                    <span class="nutrition-label">🍚 Углеводы:</span>
+                    <span id="totalCarb" class="nutrition-value">0</span> г
+                </div>
+                <div class="nutrition-item">
+                    <span class="nutrition-label">🔥 Калории:</span>
+                    <span id="totalCalories" class="nutrition-value">0</span> ккал
+                </div>
+            </div>
+        </div>
+        
+        <!-- Список ингредиентов -->
+        <div class="ingredients-section">
+            <h3>📋 Ингредиенты</h3>
+            <div id="ingredientsList" class="ingredients-list">
+                <div class="empty-message">Пока нет ингредиентов. Нажмите "Добавить продукт"</div>
+            </div>
+        </div>
+        
+        <!-- Кнопки -->
+        <div class="action-buttons">
+            <button type="button" id="addProductBtn" class="btn btn-primary" style="background: #3498db;">
+                ➕ Добавить продукт
+            </button>
+            <button type="button" id="saveDishBtn" class="btn btn-primary" style="background: #27ae60;" disabled>
+                💾 Сохранить блюдо
+            </button>
+            <a href="{% url 'training_django_app:profile' %}" class="btn" style="background: #95a5a6; color: white;">
+                ❌ Отмена
+            </a>
+        </div>
+    </form>
+</div>
+
+<style>
+    .card {
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    .form-group {
+        margin-bottom: 20px;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    .form-group input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        font-size: 1rem;
+    }
+    .nutrition-block {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+    .nutrition-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+        margin-top: 10px;
+    }
+    .nutrition-item {
+        text-align: center;
+        padding: 10px;
+        background: white;
+        border-radius: 8px;
+    }
+    .nutrition-label {
+        display: block;
+        font-size: 0.9rem;
+        color: #666;
+    }
+    .nutrition-value {
+        display: block;
+        font-size: 1.8rem;
+        font-weight: bold;
+        color: #2c3e50;
+    }
+    .ingredients-section {
+        margin-bottom: 20px;
+    }
+    .ingredients-list {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 10px;
+        min-height: 100px;
+    }
+    .empty-message {
+        text-align: center;
+        padding: 20px;
+        color: #999;
+    }
+    .ingredient-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px;
+        background: white;
+        border-radius: 8px;
+        margin-bottom: 8px;
+    }
+    .ingredient-info {
+        flex: 1;
+    }
+    .ingredient-name {
+        font-weight: bold;
+    }
+    .ingredient-weight {
+        font-size: 0.9rem;
+        color: #666;
+    }
+    .ingredient-nutrition {
+        font-size: 0.8rem;
+        color: #888;
+        margin-top: 5px;
+    }
+    .action-buttons {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+    }
+    .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        text-decoration: none;
+        font-size: 1rem;
+    }
+    .btn-primary {
+        background: #27ae60;
+        color: white;
+    }
+    .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .ingredient-actions {
+        display: flex;
+        gap: 8px;
+    }
+    .btn-edit-weight, .btn-remove-ingredient {
+        padding: 5px 10px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+    .btn-edit-weight {
+        background: #3498db;
+        color: white;
+    }
+    .btn-remove-ingredient {
+        background: #e74c3c;
+        color: white;
+    }
+    .product-modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+    }
+    .product-modal-content {
+        background: white;
+        margin: 5% auto;
+        width: 90%;
+        max-width: 600px;
+        border-radius: 10px;
+        overflow: hidden;
+        max-height: 80%;
+        overflow-y: auto;
+    }
+    .product-modal-header {
+        padding: 15px;
+        background: #2c3e50;
+        color: white;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .product-modal-close {
+        font-size: 28px;
+        cursor: pointer;
+    }
+    .product-modal-body {
+        padding: 20px;
+    }
+    .product-search-results {
+        max-height: 400px;
+        overflow-y: auto;
+        margin-top: 15px;
+    }
+    .product-search-item {
+        padding: 10px;
+        border-bottom: 1px solid #ddd;
+        margin-bottom: 10px;
+        cursor: pointer;
+    }
+    .product-search-item:hover {
+        background: #f5f5f5;
+    }
+    .product-name {
+        font-weight: bold;
+        font-size: 1.1rem;
+    }
+    .product-macros {
+        font-size: 0.8rem;
+        color: #666;
+        margin: 5px 0;
+    }
+    .loading {
+        text-align: center;
+        padding: 20px;
+        color: #666;
+    }
+</style>
+
+<script>
+    // CSRF токен
+    function getCSRFToken() {
+        const cookieValue = document.cookie
+            .split('; ')
+            .find(row => row.startsWith('csrftoken='));
+        return cookieValue ? cookieValue.split('=')[1] : '';
+    }
+
+    // Глобальные переменные
+    let ingredients = [];
+    let allProducts = [];
+    let currentModal = null;  // основное модальное окно выбора продуктов
+
+    // Загрузка всех продуктов пользователя
+    function loadAllProducts() {
+        return fetch('/api/user/products/')
+            .then(response => response.json())
+            .then(data => {
+                allProducts = data;
+                return allProducts;
+            })
+            .catch(() => []);
+    }
+
+    // Пересчёт КБЖУ блюда
+    function updateNutrition() {
+        if (ingredients.length === 0) {
+            document.getElementById('totalProtein').textContent = '0';
+            document.getElementById('totalFat').textContent = '0';
+            document.getElementById('totalCarb').textContent = '0';
+            document.getElementById('totalCalories').textContent = '0';
+            return;
+        }
+        
+        let totalProtein = 0, totalFat = 0, totalCarb = 0, totalCalories = 0, totalWeight = 0;
+        
+        for (let item of ingredients) {
+            const factor = item.weight / 100;
+            totalProtein += item.protein * factor;
+            totalFat += item.fat * factor;
+            totalCarb += item.carb * factor;
+            totalCalories += item.calories * factor;
+            totalWeight += item.weight;
+        }
+        
+        if (totalWeight > 0) {
+            const factor = 100 / totalWeight;
+            document.getElementById('totalProtein').textContent = (totalProtein * factor).toFixed(1);
+            document.getElementById('totalFat').textContent = (totalFat * factor).toFixed(1);
+            document.getElementById('totalCarb').textContent = (totalCarb * factor).toFixed(1);
+            document.getElementById('totalCalories').textContent = (totalCalories * factor).toFixed(0);
+        }
+    }
+
+    // Отрисовка списка ингредиентов
+    function renderIngredientsList() {
+        const container = document.getElementById('ingredientsList');
+        
+        if (ingredients.length === 0) {
+            container.innerHTML = '<div class="empty-message">Пока нет ингредиентов. Нажмите "Добавить продукт"</div>';
+            document.getElementById('saveDishBtn').disabled = true;
+            return;
+        }
+        
+        let html = '';
+        for (let i = 0; i < ingredients.length; i++) {
+            const item = ingredients[i];
+            const factor = item.weight / 100;
+            html += `
+                <div class="ingredient-item" data-index="${i}">
+                    <div class="ingredient-info">
+                        <div class="ingredient-name">${escapeHtml(item.name)}</div>
+                        <div class="ingredient-weight">⚖️ ${item.weight} г</div>
+                        <div class="ingredient-nutrition">
+                            🥩 ${(item.protein * factor).toFixed(1)}г | 
+                            🧈 ${(item.fat * factor).toFixed(1)}г | 
+                            🍚 ${(item.carb * factor).toFixed(1)}г | 
+                            🔥 ${(item.calories * factor).toFixed(0)} ккал
+                        </div>
+                    </div>
+                    <div class="ingredient-actions">
+                        <button type="button" class="btn-edit-weight" data-index="${i}">✏️ Вес</button>
+                        <button type="button" class="btn-remove-ingredient" data-index="${i}">🗑️</button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        container.innerHTML = html;
+        document.getElementById('saveDishBtn').disabled = false;
+        
+        document.querySelectorAll('.btn-remove-ingredient').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const index = parseInt(this.dataset.index);
+                ingredients.splice(index, 1);
+                renderIngredientsList();
+                updateNutrition();
+            });
+        });
+        
+        document.querySelectorAll('.btn-edit-weight').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const index = parseInt(this.dataset.index);
+                const newWeight = prompt('Введите новый вес в граммах:', ingredients[index].weight);
+                if (newWeight && !isNaN(newWeight) && parseFloat(newWeight) > 0) {
+                    ingredients[index].weight = parseFloat(newWeight);
+                    renderIngredientsList();
+                    updateNutrition();
+                }
+            });
+        });
+    }
+
+    // Добавление ингредиента
+    function addIngredient(product) {
+        if (ingredients.find(i => i.id === product.id)) {
+            alert('Этот продукт уже добавлен. Вы можете изменить его вес.');
+            return;
+        }
+        
+        ingredients.push({
+            id: product.id,
+            name: product.name,
+            protein: product.protein,
+            fat: product.fat,
+            carb: product.carb,
+            calories: product.calories,
+            weight: product.weight || 100
+        });
+        
+        renderIngredientsList();
+        updateNutrition();
+    }
+
+    // Модальное окно для выбора веса продукта
+    function showWeightModal(product, closeProductModalCallback) {
+        const modal = document.createElement('div');
+        modal.className = 'product-modal';
+        modal.innerHTML = `
+            <div class="product-modal-content" style="max-width: 300px;">
+                <div class="product-modal-header">
+                    <h3>⚖️ Вес продукта</h3>
+                    <span class="product-modal-close">&times;</span>
+                </div>
+                <div class="product-modal-body">
+                    <p><strong>${escapeHtml(product.name)}</strong></p>
+                    <div class="form-group">
+                        <label>Вес в граммах:</label>
+                        <input type="number" id="weightInput" class="form-control" value="100" min="1" step="10" autofocus>
+                    </div>
+                    <button type="button" id="confirmWeightBtn" class="btn btn-primary" style="background: #27ae60; width: 100%;">
+                        ➕ Добавить
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        modal.style.display = 'block';
+        
+        const closeBtn = modal.querySelector('.product-modal-close');
+        const confirmBtn = modal.querySelector('#confirmWeightBtn');
+        const weightInput = modal.querySelector('#weightInput');
+        
+        const closeModal = () => {
+            modal.remove();
+        };
+        
+        closeBtn.onclick = closeModal;
+        modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+        
+        confirmBtn.onclick = () => {
+            const weight = parseFloat(weightInput.value);
+            if (isNaN(weight) || weight <= 0) {
+                alert('Введите корректный вес');
+                return;
+            }
+            
+            const productWithWeight = { ...product, weight: weight };
+            addIngredient(productWithWeight);
+            closeModal();
+            
+            // Закрываем основное модальное окно выбора продуктов
+            if (closeProductModalCallback) {
+                closeProductModalCallback();
+            }
+        };
+    }
+
+    // Отрисовка модального окна со списком продуктов
+    function renderProductList(filterText = '') {
+        const resultsDiv = document.getElementById('productSearchResults');
+        
+        let filtered = allProducts;
+        if (filterText.trim()) {
+            const lower = filterText.toLowerCase();
+            filtered = allProducts.filter(p => p.name.toLowerCase().includes(lower));
+        }
+        
+        if (filtered.length === 0) {
+            resultsDiv.innerHTML = '<div class="loading">😕 Нет продуктов</div>';
+            return;
+        }
+        
+        resultsDiv.innerHTML = filtered.map(p => `
+            <div class="product-search-item" 
+                 data-id="${p.id}" 
+                 data-name="${escapeHtml(p.name)}" 
+                 data-protein="${p.protein}" 
+                 data-fat="${p.fat}" 
+                 data-carb="${p.carb}" 
+                 data-calories="${p.calories}">
+                <div class="product-name">${escapeHtml(p.name)}</div>
+                <div class="product-macros">
+                    🥩 ${p.protein}г | 🧈 ${p.fat}г | 🍚 ${p.carb}г | 🔥 ${p.calories} ккал
+                </div>
+            </div>
+        `).join('');
+        
+        document.querySelectorAll('.product-search-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const product = {
+                    id: parseInt(item.dataset.id),
+                    name: item.dataset.name,
+                    protein: parseFloat(item.dataset.protein),
+                    fat: parseFloat(item.dataset.fat),
+                    carb: parseFloat(item.dataset.carb),
+                    calories: parseFloat(item.dataset.calories)
+                };
+                showWeightModal(product, closeProductModal);
+            });
+        });
+    }
+
+    // Закрытие основного модального окна выбора продуктов
+    function closeProductModal() {
+        if (currentModal) {
+            currentModal.remove();
+            currentModal = null;
+        }
+    }
+
+    // Показать модальное окно выбора продуктов
+    function showProductModal() {
+        closeProductModal();
+        
+        const modal = document.createElement('div');
+        modal.className = 'product-modal';
+        modal.innerHTML = `
+            <div class="product-modal-content">
+                <div class="product-modal-header">
+                    <h3>➕ Выбрать продукт</h3>
+                    <span class="product-modal-close">&times;</span>
+                </div>
+                <div class="product-modal-body">
+                    <input type="text" id="productSearchInput" class="form-control" placeholder="🔍 Фильтр продуктов..." autofocus>
+                    <div id="productSearchResults" class="product-search-results">
+                        <div class="loading">Загрузка продуктов...</div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        currentModal = modal;
+        modal.style.display = 'block';
+        
+        const searchInput = modal.querySelector('#productSearchInput');
+        const closeBtn = modal.querySelector('.product-modal-close');
+        
+        closeBtn.onclick = closeProductModal;
+        modal.onclick = (e) => { if (e.target === modal) closeProductModal(); };
+        
+        loadAllProducts().then(() => {
+            renderProductList('');
+        });
+        
+        searchInput.addEventListener('input', function() {
+            renderProductList(this.value);
+        });
+    }
+
+    // Сохранение блюда
+    function saveDish() {
+        const dishName = document.getElementById('dishName').value.trim();
+        
+        if (!dishName) {
+            alert('Введите название блюда');
+            return;
+        }
+        
+        if (ingredients.length === 0) {
+            alert('Добавьте хотя бы один ингредиент');
+            return;
+        }
+        
+        fetch('/api/dish/save/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
+            body: JSON.stringify({
+                name: dishName,
+                ingredients: ingredients.map(ing => ({
+                    product_id: ing.id,
+                    weight_grams: ing.weight
+                }))
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(`✅ Блюдо "${data.name}" сохранено!`);
+                window.location.href = '/profile/';
+            } else {
+                alert('❌ Ошибка: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('❌ Ошибка при сохранении блюда');
+        });
+    }
+
+    // Эскейп HTML
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Инициализация
+    document.getElementById('addProductBtn').addEventListener('click', showProductModal);
+    document.getElementById('saveDishBtn').addEventListener('click', saveDish);
+</script>
+{% endblock %}

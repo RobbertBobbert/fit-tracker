@@ -2,8 +2,8 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm
 from django.core.exceptions import ValidationError
-from .models import app_user  
-from .models import UserProfile
+from .models import app_user, UserProfile, food_catalogue
+from datetime import date
 
 
 class RegistrationForm(UserCreationForm):
@@ -81,18 +81,18 @@ class RegistrationForm(UserCreationForm):
         fields = ['username', 'email', 'full_name', 'birth_date', 'gender', 'password1', 'password2']
     
     def clean_email(self):
-        """
-        Проверка: email должен быть уникальным
-        """
+        
+        #Проверка: email должен быть уникальным
+        
         email = self.cleaned_data.get('email')
         if app_user.objects.filter(email=email).exists():
             raise ValidationError('Пользователь с такой почтой уже существует')
         return email
     
     def clean_username(self):
-        """
-        Проверка: username должен быть уникальным
-        """
+        
+        # Проверка: username должен быть уникальным
+        
         username = self.cleaned_data.get('username')
         if app_user.objects.filter(username=username).exists():
             raise ValidationError('Это имя пользователя уже занято')
@@ -120,9 +120,9 @@ class RegistrationForm(UserCreationForm):
 
 
 class LoginForm(forms.Form):
-    """
-    Форма входа (простая, без модели)
-    """
+    
+    # Форма входа (простая, без модели)
+    
     username = forms.CharField(
         widget=forms.TextInput(attrs={
             'class': 'form-control',
@@ -141,9 +141,9 @@ class LoginForm(forms.Form):
 
 
 class ProfileEditForm(forms.ModelForm):
-    """
-    Форма редактирования профиля пользователя
-    """
+    
+    # Форма редактирования профиля пользователя
+    
     class Meta:
         model = UserProfile
         fields = ['weight', 'height', 'goal', 'activity_level']
@@ -186,9 +186,9 @@ class ProfileEditForm(forms.ModelForm):
 
 
 class DefaultProfileForm(forms.ModelForm):
-    """
-    Форма для первоначального заполнения профиля
-    """
+    
+    # Форма для первоначального заполнения профиля
+    
     class Meta:
         model = UserProfile
         fields = ['weight', 'height', 'goal', 'activity_level']
@@ -234,9 +234,9 @@ class DefaultProfileForm(forms.ModelForm):
     
 
 class UserEditForm(forms.ModelForm):
-    """
-    Форма редактирования личной информации пользователя
-    """
+    
+    # Форма редактирования личной информации пользователя
+    
     birth_date = forms.DateField(
         required=True,
         widget=forms.DateInput(attrs={
@@ -269,3 +269,56 @@ class UserEditForm(forms.ModelForm):
         if len(full_name) < 3:
             raise forms.ValidationError('ФИО должно содержать минимум 3 символа')
         return full_name
+    
+
+class ProductForm(forms.ModelForm):
+    #Форма для добавления простого продукта
+    class Meta:
+        model = food_catalogue
+        fields = ['name', 'protein', 'fat', 'carb']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Например: Куриная грудка'}),
+            'protein': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.1', 'placeholder': 'Белки на 100г'}),
+            'fat': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.1', 'placeholder': 'Жиры на 100г'}),
+            'carb': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.1', 'placeholder': 'Углеводы на 100г'}),
+        }
+        labels = {
+            'name': 'Название продукта',
+            'protein': 'Белки (г/100г)',
+            'fat': 'Жиры (г/100г)',
+            'carb': 'Углеводы (г/100г)',
+        }
+
+
+class DishForm(forms.ModelForm):
+    
+    # Форма для создания нового блюда 
+    # БЖУ будут рассчитаны автоматически после добавления ингредиентов
+    
+    class Meta:
+        model = food_catalogue
+        fields = ['name']  # Пока только название
+        widgets = {
+            'name': forms.TextInput(attrs={
+            'class': 'form-control',
+            'placeholder': 'Например: Овсянка с яблоком'
+            }),
+        }
+        labels = {
+            'name': 'Название блюда',
+        }
+    
+    def clean_name(self):
+        # Проверка: нет ли уже такого блюда у пользователя
+        name = self.cleaned_data.get('name')
+        user = self.instance.user if self.instance.pk else None
+        
+        # Проверяем есть ли  уже такое блюдо у текущего пользователя
+        if food_catalogue.objects.filter(
+            user=user, 
+            name__iexact=name,  # регистронезависимое сравнение
+            is_dish=True  # только блюда, не продукты
+        ).exists():
+            raise forms.ValidationError('У вас уже есть блюдо с таким названием')
+        
+        return name

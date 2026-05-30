@@ -114,9 +114,9 @@ class UserProfile(models.Model):
             calories = int(calories * 1.1)  # Профицит 10%
         
         # Базовое распределение: белки 30%, жиры 25%, углеводы 45%
-        self.target_protein = round((calories * 0.30) / 4, 1)  # 4 ккал/г
-        self.target_fat = round((calories * 0.25) / 9, 1)     # 9 ккал/г
-        self.target_carb = round((calories * 0.45) / 4, 1)    # 4 ккал/г
+        self.target_protein = round((calories * 0.30) / 4)  # 4 ккал/г
+        self.target_fat = round((calories * 0.25) / 9)     # 9 ккал/г
+        self.target_carb = round((calories * 0.45) / 4)    # 4 ккал/г
         
         return {
             'calories': calories,
@@ -125,7 +125,6 @@ class UserProfile(models.Model):
             'carb': self.target_carb
         }
 
-# models.py
 
 class food_catalogue(models.Model):
 
@@ -138,6 +137,7 @@ class food_catalogue(models.Model):
     calories = models.FloatField(default=0, editable=False, verbose_name="Калории (на 100г)")   
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    last_used = models.DateTimeField(null=True, blank=True, verbose_name="Последнее использование")
     
     def save(self, *args, **kwargs):
         is_new = self.pk is None  # Проверяем, новый ли объект
@@ -279,34 +279,66 @@ class exercise_entry(models.Model):
         ordering = ['-date', '-id']
 
 
-class food_entry(models.Model):
-    """Запись о приёме пищи в дневнике"""
+
+class Meal(models.Model):
+    #Прием пищи
+    MEAL_TYPES = [
+        ('breakfast', 'Завтрак'),
+        ('lunch', 'Обед'),
+        ('dinner', 'Ужин'),
+        ('snack', 'Перекус'),
+    ]
+    
     user = models.ForeignKey(app_user, on_delete=models.CASCADE, verbose_name="Пользователь")
-    food = models.ForeignKey(food_catalogue, on_delete=models.CASCADE, verbose_name="Продукт/Блюдо")
+    meal_type = models.CharField(max_length=20, choices=MEAL_TYPES, default='snack', verbose_name="Тип приёма")
     date = models.DateField(default=date.today, verbose_name="Дата")
-    weight_grams = models.FloatField(default=100, verbose_name="Вес порции (г)", validators=[MinValueValidator(1)])
-    
-    # Поля для хранения КБЖУ (сохраняются в БД)
-    protein = models.FloatField(default=0, verbose_name="Белки (г)")
-    carb = models.FloatField(default=0, verbose_name="Углеводы (г)")
-    fat = models.FloatField(default=0, verbose_name="Жиры (г)")
-    calories = models.FloatField(default=0, verbose_name="Калории")
-    
     created_at = models.DateTimeField(auto_now_add=True)
     
+    class Meta:
+        verbose_name = "Приём пищи"
+        verbose_name_plural = "Приёмы пищи"
+        ordering = ['date', 'meal_type', 'created_at']
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.get_meal_type_display()} - {self.date}"
+    
+    def total_calories(self):
+        #Каллории за прием 
+        return sum(item.calories for item in self.items.all())
+    
+    def total_protein(self):
+        return sum(item.protein for item in self.items.all())
+    
+    def total_fat(self):
+        return sum(item.fat for item in self.items.all())
+    
+    def total_carb(self):
+        return sum(item.carb for item in self.items.all())
+
+
+class MealItem(models.Model):
+    # Продукт в приеме
+    meal = models.ForeignKey(Meal, on_delete=models.CASCADE, related_name='items', verbose_name="Приём пищи")
+    food = models.ForeignKey(food_catalogue, on_delete=models.CASCADE, verbose_name="Продукт")
+    weight_grams = models.FloatField(default=100, verbose_name="Вес (г)", validators=[MinValueValidator(1)])
+    
+    # Кэшированные значения
+    protein = models.FloatField(default=0, verbose_name="Белки (г)")
+    fat = models.FloatField(default=0, verbose_name="Жиры (г)")
+    carb = models.FloatField(default=0, verbose_name="Углеводы (г)")
+    calories = models.FloatField(default=0, verbose_name="Калории")
+    
+    class Meta:
+        verbose_name = "Продукт в приёме"
+        verbose_name_plural = "Продукты в приёме"
+    
     def save(self, *args, **kwargs):
-        # Рассчитываем КБЖУ на основе веса порции
         factor = self.weight_grams / 100
         self.protein = round(self.food.protein * factor, 2)
-        self.carb = round(self.food.carb * factor, 2)
         self.fat = round(self.food.fat * factor, 2)
+        self.carb = round(self.food.carb * factor, 2)
         self.calories = round(self.food.calories * factor, 2)
         super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"{self.user.username} - {self.food.name} - {self.date}"
-    
-    class Meta:
-        verbose_name = "Запись о еде"
-        verbose_name_plural = "Записи о еде"
-        ordering = ['-date', '-created_at']
+        return f"{self.food.name} - {self.weight_grams}г"

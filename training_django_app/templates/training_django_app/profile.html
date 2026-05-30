@@ -139,17 +139,65 @@
             </div>
         </div>
         
-        <!-- Заглушки -->
-        <div class="card" style="grid-column: 1 / -1; text-align: center; opacity: 0.7;">
-            <h2>🚧 В разработке</h2>
+        <!-- Мои продукты и блюда -->
+        <div class="card" style="grid-column: 1 / -1;">
+            <h2>🍽️ Мои продукты и блюда</h2>
             <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-top: 20px;">
+                
+                <!-- Мои продукты -->
                 <div style="padding: 20px; background: #f8f9fa; border-radius: 10px;">
-                    <h3>🍽️ Мои блюда</h3>
-                    <p style="color: #666;">Скоро здесь будут ваши рецепты</p>
+                    <h3>🥩 Продукты</h3>
+                    <a href="{% url 'training_django_app:add_product' %}" class="btn btn-primary" style="background: #27ae60; margin-bottom: 15px;">
+                        ➕ Добавить продукт
+                    </a>
+                    <div id="productsList" style="max-height: 300px; overflow-y: auto;">
+                        {% for product in user_products %}
+                            <div class="catalogue-item" data-id="{{ product.id }}" data-type="product" style="padding: 10px; border-bottom: 1px solid #ddd; cursor: pointer;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div style="flex: 1;">
+                                        <strong>{{ product.name }}</strong>
+                                        <div style="font-size: 0.8rem; color: #666;">
+                                            🥩 {{ product.protein }}г | 🧈 {{ product.fat }}г | 🍚 {{ product.carb }}г | 🔥 {{ product.calories }} ккал
+                                        </div>
+                                    </div>
+                                    <div style="display: flex; gap: 5px;">
+                                        <button class="btn-edit-product" data-id="{{ product.id }}" style="background: #3498db; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer;">✏️</button>
+                                        <button class="btn-delete-product" data-id="{{ product.id }}" data-name="{{ product.name }}" style="background: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer;">🗑️</button>
+                                    </div>
+                                </div>
+                            </div>
+                        {% empty %}
+                            <p class="text-muted">Нет добавленных продуктов</p>
+                        {% endfor %}
+                    </div>
                 </div>
+                
+                <!-- Мои блюда -->
                 <div style="padding: 20px; background: #f8f9fa; border-radius: 10px;">
-                    <h3>🏋️ Мои упражнения</h3>
-                    <p style="color: #666;">Скоро здесь будут ваши тренировки</p>
+                    <h3>🍲 Блюда</h3>
+                    <a href="#" class="btn btn-primary" style="background: #95a5a6; margin-bottom: 15px; cursor: not-allowed;">
+                        🚧 Добавить блюдо (скоро)
+                    </a>
+                    <div id="dishesList" style="max-height: 300px; overflow-y: auto;">
+                        {% for dish in user_dishes %}
+                            <div class="catalogue-item" data-id="{{ dish.id }}" data-type="dish" style="padding: 10px; border-bottom: 1px solid #ddd; cursor: pointer;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div style="flex: 1;">
+                                        <strong>{{ dish.name }}</strong>
+                                        <div style="font-size: 0.8rem; color: #666;">
+                                            🥩 {{ dish.protein }}г | 🧈 {{ dish.fat }}г | 🍚 {{ dish.carb }}г | 🔥 {{ dish.calories }} ккал
+                                        </div>
+                                    </div>
+                                    <div style="display: flex; gap: 5px;">
+                                        <button class="btn-edit-dish" data-id="{{ dish.id }}" style="background: #3498db; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer;">✏️</button>
+                                        <button class="btn-delete-dish" data-id="{{ dish.id }}" data-name="{{ dish.name }}" style="background: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer;">🗑️</button>
+                                    </div>
+                                </div>
+                            </div>
+                        {% empty %}
+                            <p class="text-muted">Нет добавленных блюд</p>
+                        {% endfor %}
+                    </div>
                 </div>
             </div>
         </div>
@@ -157,6 +205,7 @@
 </div>
 
 <script>
+    // Переключение режима редактирования личной информации
     function toggleEdit(section) {
         if (section === 'userInfo') {
             const viewDiv = document.getElementById('userInfoView');
@@ -171,6 +220,40 @@
             }
         }
     }
+    
+    // Редактирование продукта
+    document.querySelectorAll('.btn-edit-product').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const productId = this.dataset.id;
+            window.location.href = `/catalogue/product/${productId}/edit/`;
+        });
+    });
+    
+    // Удаление продукта
+    document.querySelectorAll('.btn-delete-product').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const productId = this.dataset.id;
+            const productName = this.dataset.name;
+            
+            if (confirm(`Удалить продукт "${productName}"?`)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = `/catalogue/product/${productId}/delete/`;
+                
+                const csrfInput = document.createElement('input');
+                csrfInput.type = 'hidden';
+                csrfInput.name = 'csrfmiddlewaretoken';
+                csrfInput.value = document.querySelector('[name=csrfmiddlewaretoken]').value;
+                
+                form.appendChild(csrfInput);
+                document.body.appendChild(form);
+                form.submit();
+            }
+        });
+    });
+
 </script>
 
 <style>
