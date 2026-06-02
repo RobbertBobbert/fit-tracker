@@ -127,10 +127,18 @@ class UserProfile(models.Model):
 
 
 class food_catalogue(models.Model):
-
-    user = models.ForeignKey(app_user, on_delete=models.CASCADE, verbose_name="Владелец")
+    # Убираю тут юзера чтобы продукты были общими для всех пользователей.
+    #user = models.ForeignKey(app_user, on_delete=models.CASCADE, verbose_name="Владелец")
     name = models.CharField(max_length=200, verbose_name="Название")
     is_dish = models.BooleanField(default=False, verbose_name="Это блюдо? (если нет - продукт)")
+    created_by = models.ForeignKey(
+        app_user, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        verbose_name="Кто создал",
+        related_name='created_products'
+    )
     protein = models.FloatField(default=0, verbose_name="Белки (г/100г)")
     carb = models.FloatField(default=0, verbose_name="Углеводы (г/100г)")
     fat = models.FloatField(default=0, verbose_name="Жиры (г/100г)")
@@ -262,21 +270,53 @@ class FoodCatalogueIngredient(models.Model):
 
 
 
-class exercise_entry(models.Model):
-    user = models.ForeignKey(app_user, on_delete=models.CASCADE, verbose_name="Автор")
-    exercise_name = models.CharField(max_length=50, verbose_name="Наименование упражнения")
-    date = models.DateField(auto_now_add=True)
+class exercise_catalogue(models.Model):
+    name = models.CharField(max_length=100, verbose_name="Название упражнения")
+    created_by = models.ForeignKey(
+        app_user, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        verbose_name="Кто создал",
+        related_name='created_exercises'
+    )
     calories_per_hour = models.IntegerField(verbose_name="Калорий в час")
-    exercising_time = models.PositiveIntegerField(verbose_name="Время тренировки")
-    calories_exercise = models.FloatField(verbose_name="Сожжено калорий", editable=False, default=0)  # FloatField
+    # Храним MET или просто калории за час
+    met = models.FloatField(null=True, blank=True, verbose_name="MET (коэффициент интенсивности)")
+    is_shared = models.BooleanField(default=True, verbose_name="Общее упражнение")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Упражнение"
+        verbose_name_plural = "Упражнения"
+        ordering = ['name']
+    
+    def __str__(self):
+        return self.name
+    
 
+class ExerciseRecord(models.Model):
+    #запись о тренировке.
+    user = models.ForeignKey(app_user, on_delete=models.CASCADE, verbose_name="Пользователь")
+    exercise = models.ForeignKey(exercise_catalogue, on_delete=models.CASCADE, verbose_name="Упражнение")
+    date = models.DateField(default=date.today, verbose_name="Дата")
+    duration_minutes = models.PositiveIntegerField(verbose_name="Длительность (минуты)")
+    calories_burned = models.FloatField(verbose_name="Сожжено калорий", editable=False, default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
     def save(self, *args, **kwargs):
-        self.calories_exercise = round((self.calories_per_hour / 60) * self.exercising_time, 2)
+        # Расчёт калорий: (калорий_в_час / 60) * минуты
+        self.calories_burned = round((self.exercise.calories_per_hour / 60) * self.duration_minutes, 2)
         super().save(*args, **kwargs)
     
     class Meta:
-        verbose_name = "Внесение упражнения"
-        ordering = ['-date', '-id']
+        verbose_name = "Запись тренировки"
+        verbose_name_plural = "Записи тренировок"
+        ordering = ['-date', '-created_at']
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.exercise.name} - {self.date}"
 
 
 

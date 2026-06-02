@@ -2,7 +2,7 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm
 from django.core.exceptions import ValidationError
-from .models import app_user, UserProfile, food_catalogue
+from .models import app_user, UserProfile, food_catalogue, exercise_catalogue
 from datetime import date
 
 
@@ -107,7 +107,7 @@ class RegistrationForm(UserCreationForm):
         
         if commit:
             user.save()
-            # ✅ СОЗДАЁМ ПРОФИЛЬ
+            # СОЗДАЁМ ПРОФИЛЬ
             UserProfile.objects.create(
                 user=user,
                 weight=70,
@@ -309,16 +309,44 @@ class DishForm(forms.ModelForm):
         }
     
     def clean_name(self):
-        # Проверка: нет ли уже такого блюда у пользователя
         name = self.cleaned_data.get('name')
         user = self.instance.user if self.instance.pk else None
         
-        # Проверяем есть ли  уже такое блюдо у текущего пользователя
-        if food_catalogue.objects.filter(
-            user=user, 
-            name__iexact=name,  # регистронезависимое сравнение
-            is_dish=True  # только блюда, не продукты
-        ).exists():
-            raise forms.ValidationError('У вас уже есть блюдо с таким названием')
+        # При редактировании исключаем текущее блюдо из проверки
+        if self.instance.pk:
+            # Режим редактирования — исключаем себя
+            if food_catalogue.objects.filter(
+                user=user, 
+                name__iexact=name, 
+                is_dish=True
+            ).exclude(pk=self.instance.pk).exists():
+                raise forms.ValidationError('У вас уже есть блюдо с таким названием')
+        else:
+            # Режим создания — проверяем все блюда
+            if food_catalogue.objects.filter(
+                user=user, 
+                name__iexact=name, 
+                is_dish=True
+            ).exists():
+                raise forms.ValidationError('У вас уже есть блюдо с таким названием')
         
         return name
+    
+
+class ExerciseForm(forms.ModelForm):
+    # Форма для создания/редактирования упражнения
+    class Meta:
+        model = exercise_catalogue
+        fields = ['name', 'calories_per_hour', 'met', 'is_shared']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Например: Бег'}),
+            'calories_per_hour': forms.NumberInput(attrs={'class': 'form-control', 'step': '1', 'placeholder': 'Калорий в час'}),
+            'met': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.1', 'placeholder': 'MET (опционально)'}),
+            'is_shared': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+        }
+        labels = {
+            'name': 'Название упражнения',
+            'calories_per_hour': 'Калорий в час',
+            'met': 'MET (коэффициент интенсивности)',
+            'is_shared': 'Общее упражнение (доступно всем)',
+        }

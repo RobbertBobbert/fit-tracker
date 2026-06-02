@@ -6,11 +6,11 @@ from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_http_methods
 from django.utils import timezone
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Case, When, Value, IntegerField
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
-from .forms import RegistrationForm, LoginForm, DefaultProfileForm, UserEditForm, ProfileEditForm, ProductForm, DishForm
-from .models import app_user, food_catalogue, FoodCatalogueIngredient, exercise_entry, Meal, MealItem
+from .forms import RegistrationForm, LoginForm, DefaultProfileForm, UserEditForm, ProfileEditForm, ProductForm, DishForm, ExerciseForm
+from .models import app_user, food_catalogue, FoodCatalogueIngredient, exercise_catalogue, Meal, MealItem, ExerciseRecord
 from datetime import date
 import json
 
@@ -66,7 +66,7 @@ def login_view(request):
             # Прямая проверка пароля (минуя ебаный забаговавший authenticate)
             if user and check_password(password, user.password):
                 login(request, user)
-                messages.success(request, f'С возвращением, {user.full_name}! 👋')
+                messages.success(request, f'С возвращением, {user.full_name}!')
                 next_url = request.GET.get('next', 'training_django_app:dashboard')
                 return redirect(next_url)
             else:
@@ -89,7 +89,7 @@ def logout_view(request):
     # Выхд из системы
     
     logout(request)
-    messages.info(request, 'Вы вышли из аккаунта 👋')
+    messages.info(request, 'Вы вышли из аккаунта')
     return redirect('training_django_app:login')
 
 
@@ -111,7 +111,7 @@ def profile_setup_view(request):
             profile.calculate_daily_targets()
             profile.save()
             
-            messages.success(request, '🎉 Отлично! Профиль заполнен. Рассчитана ваша дневная норма КБЖУ.')
+            messages.success(request, 'Отлично! Профиль заполнен. Рассчитана ваша дневная норма КБЖУ.')
             return redirect('training_django_app:dashboard')
         else:
             messages.error(request, 'Пожалуйста, исправьте ошибки в форме')
@@ -139,7 +139,7 @@ def profile_view(request):
             user_form = UserEditForm(request.POST, instance=user)
             if user_form.is_valid():
                 user_form.save()
-                messages.success(request, 'Личная информация обновлена! ✅')
+                messages.success(request, 'Личная информация обновлена!')
                 return redirect('training_django_app:profile')
             else:
                 messages.error(request, 'Пожалуйста, исправьте ошибки в форме')
@@ -149,7 +149,7 @@ def profile_view(request):
                 form.save()
                 profile.calculate_daily_targets()
                 profile.save()
-                messages.success(request, 'Профиль успешно обновлён! ✅')
+                messages.success(request, 'Профиль успешно обновлён!')
                 return redirect('training_django_app:profile')
             else:
                 messages.error(request, 'Пожалуйста, исправьте ошибки в форме')
@@ -161,9 +161,28 @@ def profile_view(request):
     # Рассчитываем целевую калорийность и БЖУ
     targets = profile.calculate_daily_targets()
     
-    # Получаем продукты и блюда пользователя
-    user_products = food_catalogue.objects.filter(user=request.user, is_dish=False).order_by('-last_used', '-created_at')
-    user_dishes = food_catalogue.objects.filter(user=request.user, is_dish=True).order_by('-last_used', '-created_at')
+    # Продукты: все (общая база), сортировка: сначала свои, потом остальные
+    from django.db.models import Case, When, Value, IntegerField
+    
+    user_products = food_catalogue.objects.filter(
+        is_dish=False
+    ).annotate(
+        is_owner=Case(
+            When(created_by=user, then=Value(1)),
+            default=Value(0),
+            output_field=IntegerField()
+        )
+    ).order_by('-is_owner', '-last_used', '-created_at')
+    
+    # Блюда: только свои (по created_by)
+    user_dishes = food_catalogue.objects.filter(
+        created_by=user,
+        is_dish=True
+    ).order_by('-last_used', '-created_at')
+
+    user_exercises = exercise_catalogue.objects.filter(
+    created_by=user
+    ).order_by('name')
     
     context = {
         'user_form': user_form,
@@ -173,7 +192,8 @@ def profile_view(request):
         'targets': targets,
         'user_products': user_products,
         'user_dishes': user_dishes,
-        'title': 'Мой профиль'
+        'title': 'Мой профиль',
+        'user_exercises': user_exercises,
     }
     return render(request, 'training_django_app/profile.html', context)
 
@@ -200,12 +220,12 @@ def dashboard(request):
         total_carb += meal.total_carb()
     
     # Сожжённые калории
-    calories_burnt_agg = exercise_entry.objects.filter(
+    calories_burned_agg = ExerciseRecord.objects.filter(
         user=request.user, date=today
-    ).aggregate(total_burnt=Sum('calories_exercise'))
-    calories_burnt_agg_value = calories_burnt_agg['total_burnt'] or 0
+    ).aggregate(total_burned=Sum('calories_burned'))
+    calories_burned_agg_value = calories_burned_agg['total_burned'] or 0
     
-    balance = total_calories - calories_burnt_agg_value
+    balance = total_calories - calories_burned_agg_value
     
     context = {
         'today': today,
@@ -214,7 +234,7 @@ def dashboard(request):
         'total_protein': round(total_protein, 1),
         'total_fat': round(total_fat, 1),
         'total_carb': round(total_carb, 1),
-        'calories_burnt_agg_value': round(calories_burnt_agg_value, 1),
+        'calories_burned_agg_value': round(calories_burned_agg_value, 1),
         'balance': round(balance, 1),
     }
     return render(request, 'training_django_app/dashboard.html', context)
@@ -229,23 +249,26 @@ def product_form(request, product_id=None):
     
     if product_id:
         # Режим редактирования
-        product = get_object_or_404(food_catalogue, id=product_id, user=request.user, is_dish=False)
+        product = get_object_or_404(food_catalogue, id=product_id, is_dish=False)
+        if product.created_by != request.user:
+            messages.error(request, 'Вы можете редактировать только свои продукты')
+            return redirect('training_django_app:profile')
         title = 'Редактировать продукт'
-        submit_text = '💾 Сохранить изменения'
+        submit_text = 'Сохранить изменения'
     else:
         # Режим создания
         product = None
         title = 'Добавить продукт'
-        submit_text = '➕ Добавить продукт'
+        submit_text = 'Добавить продукт'
     
     if request.method == 'POST':
         form = ProductForm(request.POST, instance=product)
         if form.is_valid():
             new_product = form.save(commit=False)
-            new_product.user = request.user
+            new_product.created_by = request.user 
             new_product.is_dish = False
             new_product.save()
-            messages.success(request, f'✅ Продукт "{new_product.name}" сохранён!')
+            messages.success(request, f'Продукт "{new_product.name}" сохранён!')
             return redirect('training_django_app:profile')
         else:
             messages.error(request, 'Пожалуйста, исправьте ошибки в форме')
@@ -268,75 +291,78 @@ def delete_product(request, product_id):
     
     # Удаление продукта
     
-    product = get_object_or_404(food_catalogue, id=product_id, user=request.user, is_dish=False)
+    product = get_object_or_404(food_catalogue, id=product_id, is_dish=False)
+    if product.created_by != request.user:
+        messages.error(request, 'Вы можете удалять только свои продукты')
+        return redirect('training_django_app:profile')
     product_name = product.name
     product.delete()
-    messages.success(request, f'🗑️ Продукт "{product_name}" удалён!')
+    messages.success(request, f'Продукт "{product_name}" удалён!')
     return redirect('training_django_app:profile')
 
 
 @login_required
 @require_http_methods(['POST'])
 def api_save_dish(request):
-    
-    # API для сохранения блюда с ингредиентами
-    # Принимает JSON: { "name": "Название", "ingredients": [{"product_id": 1, "weight_grams": 100}, ...] }
-    
     try:
         data = json.loads(request.body)
         dish_name = data.get('name', '').strip()
         ingredients_data = data.get('ingredients', [])
+        dish_id = data.get('dish_id')
         
-        # Проверка названия
         if not dish_name:
             return JsonResponse({'error': 'Название блюда обязательно'}, status=400)
         
-        # Проверка: есть ли ингредиенты
         if not ingredients_data:
             return JsonResponse({'error': 'Добавьте хотя бы один ингредиент'}, status=400)
         
-        # Проверка: нет ли уже блюда с таким названием у пользователя
-        if food_catalogue.objects.filter(user=request.user, name__iexact=dish_name, is_dish=True).exists():
+        existing = food_catalogue.objects.filter(
+            created_by=request.user, 
+            name__iexact=dish_name, 
+            is_dish=True
+        )
+        if dish_id:
+            existing = existing.exclude(id=dish_id)
+        
+        if existing.exists():
             return JsonResponse({'error': 'Блюдо с таким названием уже существует'}, status=400)
         
-        # ВСЁ В ОДНОЙ ТРАНЗАКЦИИ (если что-то упадёт — откатится)
         with transaction.atomic():
-            # 1. Создаём блюдо
-            dish = food_catalogue.objects.create(
-                user=request.user,
-                name=dish_name,
-                is_dish=True,
-                protein=0,
-                fat=0,
-                carb=0,
-                calories=0
-            )
+            if dish_id:
+                dish = get_object_or_404(food_catalogue, id=dish_id, created_by=request.user, is_dish=True)
+                dish.name = dish_name
+                dish.save()
+                FoodCatalogueIngredient.objects.filter(dish=dish).delete()
+            else:
+                dish = food_catalogue.objects.create(
+                    created_by=request.user,
+                    name=dish_name,
+                    is_dish=True,
+                    protein=0,
+                    fat=0,
+                    carb=0,
+                    calories=0
+                )
             
-            # 2. Создаём ингредиенты
             for item in ingredients_data:
                 product_id = item.get('product_id')
                 weight_grams = item.get('weight_grams', 0)
                 
                 if not product_id or weight_grams <= 0:
-                    continue  # пропускаем некорректные
+                    continue
                 
-                # Проверяем, существует ли продукт и принадлежит ли пользователю
                 try:
-                    product = food_catalogue.objects.get(id=product_id, user=request.user)
+                    product = food_catalogue.objects.get(id=product_id, is_dish=False)
+                    FoodCatalogueIngredient.objects.create(
+                        dish=dish,
+                        ingredient=product,
+                        weight_grams=weight_grams
+                    )
                 except food_catalogue.DoesNotExist:
-                    continue  # продукт не найден — пропускаем
-                
-                # Создаём ингредиент (БЖУ пересчитаются автоматически через save())
-                FoodCatalogueIngredient.objects.create(
-                    dish=dish,
-                    ingredient=product,
-                    weight_grams=weight_grams
-                )
+                    continue
             
-            # 3. После добавления всех ингредиентов БЖУ уже пересчитано
-            # (каждый ингредиент при создании вызывал update_from_ingredients)
+            dish.update_from_ingredients()
         
-        # Возвращаем данные созданного блюда
         return JsonResponse({
             'success': True,
             'dish_id': dish.id,
@@ -357,12 +383,18 @@ def api_save_dish(request):
 @require_http_methods(['GET'])
 def api_search_user_products(request):
     
-    # API для получения всех продуктов пользователя (is_dish=False)
+    # API для получения всех продуктов (общая база + свои)
+    # Сортировка: сначала свои, потом остальные
     
     products = food_catalogue.objects.filter(
-        user=request.user, 
         is_dish=False
-    ).order_by('-last_used', '-created_at')
+    ).annotate(
+        is_owner=Case(
+            When(created_by=request.user, then=Value(1)),
+            default=Value(0),
+            output_field=IntegerField()
+        )
+    ).order_by('-is_owner', '-last_used', '-created_at')
     
     data = [{
         'id': p.id,
@@ -370,7 +402,143 @@ def api_search_user_products(request):
         'protein': p.protein,
         'fat': p.fat,
         'carb': p.carb,
-        'calories': p.calories
+        'calories': p.calories,
+        'is_owner': p.created_by == request.user if p.created_by else False
     } for p in products]
+    
+    return JsonResponse(data, safe=False)
+
+
+@login_required
+def dish_form(request, dish_id=None):
+    # Универсальная форма для создания и редактирования блюда
+    # Если dish_id передан: редактируем существующее блюдо
+    # Если нет: создаём новое
+    if dish_id:
+        # Режим редактирования
+        dish = get_object_or_404(food_catalogue, id=dish_id, created_by=request.user, is_dish=True)
+        title = 'Редактировать блюдо'
+        submit_text = 'Сохранить изменения'
+    else:
+        # Режим создания
+        dish = None
+        title = 'Создать блюдо'
+        submit_text = 'Создать блюдо'
+    
+    # Обработка POST-запроса (сохранение названия)
+    if request.method == 'POST':
+        form = DishForm(request.POST, instance=dish)
+        if form.is_valid():
+            new_dish = form.save(commit=False)
+            new_dish.created_by = request.user
+            #new_dish.user = request.user
+            new_dish.is_dish = True
+            new_dish.save()
+            messages.success(request, f'Блюдо "{new_dish.name}" сохранено!')
+            return redirect('training_django_app:edit_dish', dish_id=new_dish.id)
+        else:
+            messages.error(request, 'Пожалуйста, исправьте ошибки в форме')
+    else:
+        form = DishForm(instance=dish)
+    
+    # Получаем ингредиенты для редактирования
+    ingredients = []
+    if dish:
+        ingredients = FoodCatalogueIngredient.objects.filter(dish=dish).select_related('ingredient')
+    
+    context = {
+        'form': form,
+        'title': title,
+        'submit_text': submit_text,
+        'is_edit': dish_id is not None,
+        'dish_id': dish_id,
+        'dish': dish,
+        'ingredients': ingredients,
+    }
+    return render(request, 'training_django_app/dish_form.html', context)
+
+
+@login_required
+@require_http_methods(['POST'])
+def delete_dish(request, dish_id):
+    dish = get_object_or_404(food_catalogue, id=dish_id, created_by=request.user, is_dish=True)  # ← ИСПРАВЛЕНО
+    dish_name = dish.name
+    dish.delete()
+    messages.success(request, f'Блюдо "{dish_name}" удалено!')
+    return redirect('training_django_app:profile')
+
+
+@login_required
+def exercise_form(request, exercise_id=None):
+    # Универсальная форма для создания/редактирования упражнения
+    if exercise_id:
+        exercise = get_object_or_404(exercise_catalogue, id=exercise_id)
+        if exercise.created_by != request.user:
+            messages.error(request, 'Вы можете редактировать только свои упражнения')
+            return redirect('training_django_app:profile')
+        title = 'Редактировать упражнение'
+        submit_text = 'Сохранить изменения'
+    else:
+        exercise = None
+        title = 'Добавить упражнение'
+        submit_text = 'Добавить упражнение'
+    
+    if request.method == 'POST':
+        form = ExerciseForm(request.POST, instance=exercise)
+        if form.is_valid():
+            new_exercise = form.save(commit=False)
+            new_exercise.created_by = request.user
+            new_exercise.save()
+            messages.success(request, f'Упражнение "{new_exercise.name}" сохранено!')
+            return redirect('training_django_app:profile')
+        else:
+            messages.error(request, 'Пожалуйста, исправьте ошибки в форме')
+    else:
+        form = ExerciseForm(instance=exercise)
+    
+    context = {
+        'form': form,
+        'title': title,
+        'submit_text': submit_text,
+        'is_edit': exercise_id is not None,
+        'exercise_id': exercise_id,
+    }
+    return render(request, 'training_django_app/exercise_form.html', context)
+
+
+@login_required
+@require_http_methods(['POST'])
+def delete_exercise(request, exercise_id):
+    # Удаление упражнения
+    exercise = get_object_or_404(exercise_catalogue, id=exercise_id)
+    if exercise.created_by != request.user:
+        messages.error(request, 'Вы можете удалять только свои упражнения')
+        return redirect('training_django_app:profile')
+    exercise_name = exercise.name
+    exercise.delete()
+    messages.success(request, f'Упражнение "{exercise_name}" удалено!')
+    return redirect('training_django_app:profile')
+
+
+@login_required
+@require_http_methods(['GET'])
+def api_search_exercises(request):
+    # API для получения упражнений (общая база + свои)
+    from django.db.models import Case, When, Value, IntegerField
+    
+    exercises = exercise_catalogue.objects.annotate(
+        is_owner=Case(
+            When(created_by=request.user, then=Value(1)),
+            default=Value(0),
+            output_field=IntegerField()
+        )
+    ).order_by('-is_owner', 'name')
+    
+    data = [{
+        'id': e.id,
+        'name': e.name,
+        'calories_per_hour': e.calories_per_hour,
+        'is_owner': e.created_by == request.user if e.created_by else False
+    } for e in exercises]
     
     return JsonResponse(data, safe=False)
