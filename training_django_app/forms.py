@@ -8,7 +8,6 @@ from datetime import date
 
 class RegistrationForm(UserCreationForm):
 
-    
     email = forms.EmailField(
         required=True,
         widget=forms.EmailInput(attrs={
@@ -77,6 +76,7 @@ class RegistrationForm(UserCreationForm):
     )
     
     class Meta:
+
         model = app_user  # Указываем, с какой моделью работаем
         fields = ['username', 'email', 'full_name', 'birth_date', 'gender', 'password1', 'password2']
     
@@ -120,9 +120,7 @@ class RegistrationForm(UserCreationForm):
 
 
 class LoginForm(forms.Form):
-    
     # Форма входа (простая, без модели)
-    
     username = forms.CharField(
         widget=forms.TextInput(attrs={
             'class': 'form-control',
@@ -141,32 +139,20 @@ class LoginForm(forms.Form):
 
 
 class ProfileEditForm(forms.ModelForm):
-    
-    # Форма редактирования профиля пользователя
-    
     class Meta:
         model = UserProfile
-        fields = ['weight', 'height', 'goal', 'activity_level']
+        fields = ['weight', 'height', 'body_fat', 'goal', 'activity_level']  # ← ТОЛЬКО ЭТИ ПОЛЯ
         widgets = {
-            'weight': forms.NumberInput(attrs={
-                'class': 'form-control',
-                'step': '0.1',
-                'placeholder': '75.5'
-            }),
-            'height': forms.NumberInput(attrs={
-                'class': 'form-control',
-                'placeholder': '175'
-            }),
-            'goal': forms.Select(attrs={
-                'class': 'form-control'
-            }),
-            'activity_level': forms.Select(attrs={
-                'class': 'form-control'
-            }),
+            'weight': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.1'}),
+            'height': forms.NumberInput(attrs={'class': 'form-control'}),
+            'body_fat': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.1'}),
+            'goal': forms.Select(attrs={'class': 'form-control'}),
+            'activity_level': forms.Select(attrs={'class': 'form-control'}),
         }
         labels = {
             'weight': 'Вес (кг)',
             'height': 'Рост (см)',
+            'body_fat': 'Процент жира (%)',
             'goal': 'Цель',
             'activity_level': 'Уровень активности',
         }
@@ -183,15 +169,19 @@ class ProfileEditForm(forms.ModelForm):
             raise forms.ValidationError('Рост должен быть от 100 до 250 см')
         return height
     
+    def clean_body_fat(self):
+        body_fat = self.cleaned_data.get('body_fat')
+        if body_fat and (body_fat < 5 or body_fat > 60):
+            raise forms.ValidationError('Процент жира должен быть от 5 до 60%')
+        return body_fat
+    
 
 
 class DefaultProfileForm(forms.ModelForm):
-    
-    # Форма для первоначального заполнения профиля
-    
+    #форма заполнения по дефолту
     class Meta:
         model = UserProfile
-        fields = ['weight', 'height', 'goal', 'activity_level']
+        fields = ['weight', 'height', 'body_fat', 'goal', 'activity_level']
         widgets = {
             'weight': forms.NumberInput(attrs={
                 'class': 'form-control',
@@ -201,6 +191,11 @@ class DefaultProfileForm(forms.ModelForm):
             'height': forms.NumberInput(attrs={
                 'class': 'form-control',
                 'placeholder': '175'
+            }),
+            'body_fat': forms.NumberInput(attrs={
+                'class': 'form-control',
+                'step': '0.1',
+                'placeholder': '15'
             }),
             'goal': forms.Select(attrs={
                 'class': 'form-control'
@@ -212,10 +207,12 @@ class DefaultProfileForm(forms.ModelForm):
         labels = {
             'weight': 'Вес (кг)',
             'height': 'Рост (см)',
+            'body_fat': 'Процент жира (%) — опционально',
             'goal': 'Ваша цель',
             'activity_level': 'Уровень активности',
         }
         help_texts = {
+            'body_fat': 'Если не знаете — оставьте пустым',
             'goal': 'Какую цель вы преследуете?',
             'activity_level': 'Насколько вы активны в повседневной жизни?',
         }
@@ -232,11 +229,15 @@ class DefaultProfileForm(forms.ModelForm):
             raise forms.ValidationError('Рост должен быть от 100 до 250 см')
         return height
     
+    def clean_body_fat(self):
+        body_fat = self.cleaned_data.get('body_fat')
+        if body_fat and (body_fat < 5 or body_fat > 60):
+            raise forms.ValidationError('Процент жира должен быть от 5 до 60%')
+        return body_fat
+    
 
 class UserEditForm(forms.ModelForm):
-    
     # Форма редактирования личной информации пользователя
-    
     birth_date = forms.DateField(
         required=True,
         widget=forms.DateInput(attrs={
@@ -291,10 +292,8 @@ class ProductForm(forms.ModelForm):
 
 
 class DishForm(forms.ModelForm):
-    
     # Форма для создания нового блюда 
     # БЖУ будут рассчитаны автоматически после добавления ингредиентов
-    
     class Meta:
         model = food_catalogue
         fields = ['name']  # Пока только название
@@ -350,3 +349,4 @@ class ExerciseForm(forms.ModelForm):
             'met': 'MET (коэффициент интенсивности)',
             'is_shared': 'Общее упражнение (доступно всем)',
         }
+

@@ -79,9 +79,9 @@ WSGI_APPLICATION = 'training_django.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'fit_database',           # Имя базы (шаг 2)
-        'USER': 'django_user',           # Имя пользователя (шаг 3)
-        'PASSWORD': '691488',         # Пароль (шаг 3)
+        'NAME': 'fit_database',           
+        'USER': 'django_user',           
+        'PASSWORD': '691488',         
         'HOST': 'localhost',
         'PORT': '5432',
     }

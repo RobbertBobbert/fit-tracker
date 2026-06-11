@@ -6,12 +6,12 @@ from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_http_methods
 from django.utils import timezone
 from django.db import transaction
-from django.db.models import Sum, Case, When, Value, IntegerField
+from django.db.models import Sum, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from .forms import RegistrationForm, LoginForm, DefaultProfileForm, UserEditForm, ProfileEditForm, ProductForm, DishForm, ExerciseForm
 from .models import app_user, food_catalogue, FoodCatalogueIngredient, exercise_catalogue, Meal, MealItem, ExerciseRecord
-from datetime import date
+from datetime import date, datetime
 import json
 
 
@@ -99,18 +99,15 @@ def profile_setup_view(request):
         return redirect('training_django_app:login')
     
     profile = request.user.profile
-    
     # Если профиль уже заполнен (не значения по умолчанию), перенаправляем на дашборд
     if profile.weight != 70 and profile.height != 170:
         return redirect('training_django_app:dashboard')
-    
     if request.method == 'POST':
         form = DefaultProfileForm(request.POST, instance=profile)
         if form.is_valid():
             form.save()
             profile.calculate_daily_targets()
-            profile.save()
-            
+            profile.save() 
             messages.success(request, 'Отлично! Профиль заполнен. Рассчитана ваша дневная норма КБЖУ.')
             return redirect('training_django_app:dashboard')
         else:
@@ -143,6 +140,26 @@ def profile_view(request):
                 return redirect('training_django_app:profile')
             else:
                 messages.error(request, 'Пожалуйста, исправьте ошибки в форме')
+        
+        elif 'update_custom_targets' in request.POST:
+            # Сохранение ручных целей (калории рассчитываются из БЖУ)
+            profile.custom_targets_enabled = True
+            # Получаем БЖУ
+            if request.POST.get('target_protein'):
+                profile.target_protein = float(request.POST.get('target_protein'))
+            if request.POST.get('target_fat'):
+                profile.target_fat = float(request.POST.get('target_fat'))
+            if request.POST.get('target_carb'):
+                profile.target_carb = float(request.POST.get('target_carb'))
+            # Рассчитываем калории из БЖУ
+            protein = profile.target_protein or 0
+            fat = profile.target_fat or 0
+            carb = profile.target_carb or 0
+            profile.custom_calories = round((protein * 4) + (fat * 9) + (carb * 4), 1)
+            profile.save()
+            messages.success(request, 'Ручные цели сохранены!')
+            return redirect('training_django_app:profile')
+
         else:
             form = ProfileEditForm(request.POST, instance=profile)
             if form.is_valid():
@@ -199,15 +216,40 @@ def profile_view(request):
 
 
 @login_required
+@require_http_methods(['POST'])
+def api_toggle_custom_targets(request):
+    try:
+        data = json.loads(request.body)
+        enabled = data.get('enabled', False)
+        
+        profile = request.user.profile
+        profile.custom_targets_enabled = enabled
+        
+        # Если включаем ручной режим, но нет сохранённых целей — подставляем текущие авто-цели
+        if enabled and not profile.custom_calories:
+            targets = profile.calculate_daily_targets()
+            profile.custom_calories = targets['calories']
+            profile.target_protein = targets['protein']
+            profile.target_fat = targets['fat']
+            profile.target_carb = targets['carb']
+        
+        profile.save()
+        
+        return JsonResponse({'success': True})
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
 @require_http_methods(['GET'])
 def dashboard(request):
-    #НеДамБорд
     today = timezone.now().date()
     
     # Получаем все приёмы пищи за сегодня
     meals = Meal.objects.filter(user=request.user, date=today).prefetch_related('items__food')
     
-    # Подсчёт итогов за день
+    # Подсчёт итогов за день (еда)
     total_calories = 0
     total_protein = 0
     total_fat = 0
@@ -219,13 +261,17 @@ def dashboard(request):
         total_fat += meal.total_fat()
         total_carb += meal.total_carb()
     
-    # Сожжённые калории
+    # Сожжённые калории (тренировки)
     calories_burned_agg = ExerciseRecord.objects.filter(
         user=request.user, date=today
     ).aggregate(total_burned=Sum('calories_burned'))
     calories_burned_agg_value = calories_burned_agg['total_burned'] or 0
     
     balance = total_calories - calories_burned_agg_value
+    
+    # Получаем целевые нормы из профиля
+    profile = request.user.profile
+    targets = profile.calculate_daily_targets()
     
     context = {
         'today': today,
@@ -236,6 +282,12 @@ def dashboard(request):
         'total_carb': round(total_carb, 1),
         'calories_burned_agg_value': round(calories_burned_agg_value, 1),
         'balance': round(balance, 1),
+        # Целевые нормы
+        'target_calories': targets['calories'],
+        'target_protein': targets['protein'],
+        'target_fat': targets['fat'],
+        'target_carb': targets['carb'],
+        'is_custom_targets': targets.get('is_custom', False),
     }
     return render(request, 'training_django_app/dashboard.html', context)
 
@@ -383,18 +435,23 @@ def api_save_dish(request):
 @require_http_methods(['GET'])
 def api_search_user_products(request):
     
-    # API для получения всех продуктов (общая база + свои)
-    # Сортировка: сначала свои, потом остальные
+    #API для поиска продуктов И блюд с пагинацией
     
+    query = request.GET.get('q', '').strip()
+    offset = int(request.GET.get('offset', 0))
+    limit = int(request.GET.get('limit', 10))
+    
+    # Базовый запрос
     products = food_catalogue.objects.filter(
-        is_dish=False
-    ).annotate(
-        is_owner=Case(
-            When(created_by=request.user, then=Value(1)),
-            default=Value(0),
-            output_field=IntegerField()
-        )
-    ).order_by('-is_owner', '-last_used', '-created_at')
+        Q(created_by=request.user) | Q(created_by__isnull=True)
+    )
+    
+    if query:
+        products = products.filter(name__icontains=query)
+    
+    # Пагинация
+    total = products.count()
+    products = products.order_by('-last_used', '-created_at')[offset:offset + limit]
     
     data = [{
         'id': p.id,
@@ -403,10 +460,15 @@ def api_search_user_products(request):
         'fat': p.fat,
         'carb': p.carb,
         'calories': p.calories,
-        'is_owner': p.created_by == request.user if p.created_by else False
+        'is_dish': p.is_dish,
     } for p in products]
     
-    return JsonResponse(data, safe=False)
+    return JsonResponse({
+        'items': data,
+        'total': total,
+        'offset': offset,
+        'has_more': offset + limit < total
+    }, safe=False)
 
 
 @login_required
@@ -542,3 +604,181 @@ def api_search_exercises(request):
     } for e in exercises]
     
     return JsonResponse(data, safe=False)
+
+@login_required
+def meal_form(request):
+    """Создание или редактирование приёма пищи (общая страница)"""
+    meal_id = request.GET.get('meal_id')
+    meal = None
+    items = []
+    
+    if meal_id:
+        meal = get_object_or_404(Meal, id=meal_id, user=request.user)
+        items = MealItem.objects.filter(meal=meal).select_related('food')
+    
+    # Дата из GET-параметра или сегодня
+    date_str = request.GET.get('date')
+    if date_str:
+        meal_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    else:
+        meal_date = timezone.now().date()
+    
+    context = {
+        'meal': meal,
+        'items': items,
+        'date': meal_date,
+        'title': 'Редактировать приём пищи' if meal else 'Новый приём пищи'
+    }
+    return render(request, 'training_django_app/meal_form.html', context)
+
+@login_required
+@require_http_methods(['POST'])
+def api_meal_save(request):
+    #API для создания нового приёма пищи с продуктами
+    try:
+        data = json.loads(request.body)
+        date_str = data.get('date')
+        time_str = data.get('time')
+        items_data = data.get('items', [])
+        
+        if not items_data:
+            return JsonResponse({'error': 'Добавьте хотя бы один продукт'}, status=400)
+        
+        # Парсим дату
+        meal_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        meal_time = datetime.strptime(time_str, '%H:%M').time()
+        
+        # Создаём приём пищи
+        meal = Meal.objects.create(
+            user=request.user,
+            date=meal_date,
+            time=meal_time
+        )
+        
+        # Добавляем продукты
+        for item in items_data:
+            product_id = item.get('product_id')
+            weight_grams = item.get('weight_grams', 100)
+            
+            product = get_object_or_404(food_catalogue, id=product_id)
+            MealItem.objects.create(
+                meal=meal,
+                food=product,
+                weight_grams=weight_grams
+            )
+        
+        return JsonResponse({'success': True, 'meal_id': meal.id})
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+@login_required
+@require_http_methods(['POST'])
+def api_delete_meal(request, meal_id):
+    # API для удаления приёма пищи
+    try:
+        meal = get_object_or_404(Meal, id=meal_id, user=request.user)
+        meal.delete()
+        return JsonResponse({'success': True})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@login_required
+@require_http_methods(['POST'])
+def api_meal_update_time(request, meal_id):
+    #API для обновления времени приёма пищи
+    try:
+        data = json.loads(request.body)
+        time_str = data.get('time')
+        meal_time = datetime.strptime(time_str, '%H:%M').time()
+        
+        meal = get_object_or_404(Meal, id=meal_id, user=request.user)
+        meal.time = meal_time
+        meal.save()
+        
+        return JsonResponse({'success': True})
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@login_required
+@require_http_methods(['POST'])
+def api_add_meal_item(request):
+    #API для добавления продукта в приём пищи
+    try:
+        data = json.loads(request.body)
+        meal_id = data.get('meal_id')
+        product_id = data.get('product_id')
+        weight_grams = float(data.get('weight_grams', 100))
+        
+        meal = get_object_or_404(Meal, id=meal_id, user=request.user)
+        product = get_object_or_404(food_catalogue, id=product_id)
+        
+        # Проверяем, есть ли уже такой продукт в приёме
+        existing_item = MealItem.objects.filter(meal=meal, food=product).first()
+        if existing_item:
+            existing_item.weight_grams = weight_grams
+            existing_item.save()
+        else:
+            MealItem.objects.create(
+                meal=meal,
+                food=product,
+                weight_grams=weight_grams
+            )
+        
+        return JsonResponse({'success': True})
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+@login_required
+@require_http_methods(['POST'])
+def api_delete_meal_item(request, item_id):
+    # API для удаления продукта из приёма пищи
+    try:
+        item = get_object_or_404(MealItem, id=item_id, meal__user=request.user)
+        item.delete()
+        return JsonResponse({'success': True})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+@login_required
+@require_http_methods(['POST'])
+def api_update_meal_item_weight(request, item_id):
+    # API для обновления веса продукта в приёме пищи
+    try:
+        data = json.loads(request.body)
+        weight_grams = float(data.get('weight_grams', 100))
+        
+        item = get_object_or_404(MealItem, id=item_id, meal__user=request.user)
+        item.weight_grams = weight_grams
+        item.save()
+        
+        return JsonResponse({
+            'success': True,
+            'protein': item.protein,
+            'fat': item.fat,
+            'carb': item.carb,
+            'calories': item.calories
+        })
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+@login_required
+@require_http_methods(['GET'])
+def api_meal_totals(request, meal_id):
+    # API для получения итогов приёма пищи
+    meal = get_object_or_404(Meal, id=meal_id, user=request.user)
+    return JsonResponse({
+        'protein': meal.total_protein(),
+        'fat': meal.total_fat(),
+        'carb': meal.total_carb(),
+        'calories': meal.total_calories()
+    })
+
+@login_required
+def add_training(request):
+    messages.info(request, 'Функция добавления тренировки в разработке')
+    return redirect('training_django_app:dashboard')
+
+

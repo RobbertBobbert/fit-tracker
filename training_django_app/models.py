@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from datetime import date
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.utils import timezone
 
 
 class app_user(AbstractUser):
@@ -58,6 +59,13 @@ class UserProfile(models.Model):
     # Антропометрия
     weight = models.FloatField(verbose_name='Вес (кг)', validators=[MinValueValidator(20, 'Вес должен быть > 20 кг')])
     height = models.PositiveIntegerField(verbose_name='Рост (см)', validators=[MinValueValidator(100, 'Рост должен быть > 100 см')])
+    body_fat = models.FloatField(
+        null=True, 
+        blank=True, 
+        verbose_name="Процент жира (%)",
+        validators=[MinValueValidator(5), MaxValueValidator(60)],
+        help_text="Опционально. Если знаете свой процент жира — укажите для более точного расчёта"
+    )
     
     # Цели и активность
     goal = models.CharField(max_length=20, choices=GOAL_CHOICES, default='maintenance', verbose_name='Цель')
@@ -67,6 +75,8 @@ class UserProfile(models.Model):
     target_protein = models.FloatField(blank=True, null=True, verbose_name='Целевой белок (г/день)')
     target_fat = models.FloatField(blank=True, null=True, verbose_name='Целевые жиры (г/день)')
     target_carb = models.FloatField(blank=True, null=True, verbose_name='Целевые углеводы (г/день)')
+    custom_targets_enabled = models.BooleanField(default=False, verbose_name="Ручная настройка целей")
+    custom_calories = models.FloatField(blank=True, null=True, verbose_name="Целевые калории (своё значение)")  
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -86,43 +96,63 @@ class UserProfile(models.Model):
         return 0
     
     @property
-    # Расчсет базового метаболизма
     def bmr(self):
-        age = self.user.age
-        if self.user.gender == 'male':
-            return 10 * self.weight + 6.25 * self.height - 5 * age + 5
+        # Расчёт BMR с учётом процента жира (если есть)
+        # Если есть процент жира — используем формулу Кэтча-МакАрдла
+        if self.body_fat and self.body_fat > 0:
+            lean_mass = self.weight * (1 - self.body_fat / 100)  # безжировая масса в кг
+            return round(370 + (21.6 * lean_mass), 1)
         else:
-            return 10 * self.weight + 6.25 * self.height - 5 * age - 161
+            # Иначе стандартная формула Миффлина-Сан-Жеора
+            age = self.user.age
+            if self.user.gender == 'male':
+                return round(10 * self.weight + 6.25 * self.height - 5 * age + 5, 1)
+            else:
+                return round(10 * self.weight + 6.25 * self.height - 5 * age - 161, 1)
     
     @property
     def maintenance_calories(self):
         calories = round(self.bmr * self.activity_level)
-        
         # Корректировка для высокого ИМТ
         if self.bmi > 30:
             calories = int(calories * 0.85)
-        
         return max(calories, 1500)
+    
+    @property
+    def lean_mass(self):
+        #Безжировая масса (кг)
+        if self.body_fat:
+            return round(self.weight * (1 - self.body_fat / 100), 1)
+        return None
     
     # Рассчет БЖУшечки
     def calculate_daily_targets(self):
-        calories = self.maintenance_calories
-        
-        if self.goal == 'weight_loss':
-            calories = int(calories * 0.8)  # Дефицит 20%
-        elif self.goal == 'muscle_gain':
-            calories = int(calories * 1.1)  # Профицит 10%
-        
-        # Базовое распределение: белки 30%, жиры 25%, углеводы 45%
-        self.target_protein = round((calories * 0.30) / 4)  # 4 ккал/г
-        self.target_fat = round((calories * 0.25) / 9)     # 9 ккал/г
-        self.target_carb = round((calories * 0.45) / 4)    # 4 ккал/г
+        #Возвращает целевые КБЖУ (авто или ручные)
+        if self.custom_targets_enabled and self.custom_calories:
+            # Ручной режим
+            calories = self.custom_calories
+            protein = self.target_protein or round(calories * 0.30 / 4, 1)
+            fat = self.target_fat or round(calories * 0.25 / 9, 1)
+            carb = self.target_carb or round(calories * 0.45 / 4, 1)
+        else:
+            # Автоматический режим
+            calories = self.maintenance_calories
+            
+            if self.goal == 'weight_loss':
+                calories = int(calories * 0.8)
+            elif self.goal == 'muscle_gain':
+                calories = int(calories * 1.1)
+            
+            protein = round(calories * 0.30 / 4, 1)
+            fat = round(calories * 0.25 / 9, 1)
+            carb = round(calories * 0.45 / 4, 1)
         
         return {
-            'calories': calories,
-            'protein': self.target_protein,
-            'fat': self.target_fat,
-            'carb': self.target_carb
+            'calories': int(calories),
+            'protein': protein,
+            'fat': fat,
+            'carb': carb,
+            'is_custom': self.custom_targets_enabled
         }
 
 
@@ -148,8 +178,8 @@ class food_catalogue(models.Model):
     last_used = models.DateTimeField(null=True, blank=True, verbose_name="Последнее использование")
     
     def save(self, *args, **kwargs):
-        is_new = self.pk is None  # Проверяем, новый ли объект
-        
+        is_new = self.pk is None  
+        # Проверяем, новый ли объект
         if not self.is_dish:
             # Для продуктов — рассчитываем калории
             self.calories = round(self.protein * 4 + self.carb * 4 + self.fat * 9, 2)
@@ -165,7 +195,6 @@ class food_catalogue(models.Model):
         super().save(*args, **kwargs)
     
     def update_from_ingredients(self):
-        
         if not self.is_dish:
             return  # Только для блюд
         ingredients = self.ingredients.all()
@@ -204,7 +233,6 @@ class food_catalogue(models.Model):
         self.save()
     
     def calculate_for_weight(self, weight_grams):
-
         factor = weight_grams / 100
         return {
             'protein': round(self.protein * factor, 2),
@@ -306,8 +334,20 @@ class ExerciseRecord(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     
     def save(self, *args, **kwargs):
-        # Расчёт калорий: (калорий_в_час / 60) * минуты
-        self.calories_burned = round((self.exercise.calories_per_hour / 60) * self.duration_minutes, 2)
+        # Если есть MET — считаем через BMR пользователя
+        if self.exercise.met:
+            bmr_per_minute = self.user.profile.bmr / 1440  # калорий в минуту в покое
+            self.calories_burned = round(
+                self.exercise.met * bmr_per_minute * self.duration_minutes, 2
+            )
+        elif self.exercise.calories_per_hour:
+            # Иначе используем calories_per_hour
+            self.calories_burned = round(
+                (self.exercise.calories_per_hour / 60) * self.duration_minutes, 2
+            )
+        else:
+            self.calories_burned = 0
+            
         super().save(*args, **kwargs)
     
     class Meta:
@@ -321,29 +361,25 @@ class ExerciseRecord(models.Model):
 
 
 class Meal(models.Model):
-    #Прием пищи
-    MEAL_TYPES = [
-        ('breakfast', 'Завтрак'),
-        ('lunch', 'Обед'),
-        ('dinner', 'Ужин'),
-        ('snack', 'Перекус'),
-    ]
-    
+    # Приём пищи (группа продуктов)
     user = models.ForeignKey(app_user, on_delete=models.CASCADE, verbose_name="Пользователь")
-    meal_type = models.CharField(max_length=20, choices=MEAL_TYPES, default='snack', verbose_name="Тип приёма")
     date = models.DateField(default=date.today, verbose_name="Дата")
+    time = models.TimeField(default=timezone.now, verbose_name="Время приёма")
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
         verbose_name = "Приём пищи"
         verbose_name_plural = "Приёмы пищи"
-        ordering = ['date', 'meal_type', 'created_at']
+        ordering = ['-date', '-time', '-created_at']
     
     def __str__(self):
-        return f"{self.user.username} - {self.get_meal_type_display()} - {self.date}"
+        return f"{self.user.username} - {self.date} {self.time}"
+    
+    def is_empty(self):
+        # Проверяеv, есть ли продукты в приёме
+        return not self.items.exists()
     
     def total_calories(self):
-        #Каллории за прием 
         return sum(item.calories for item in self.items.all())
     
     def total_protein(self):

@@ -1,0 +1,595 @@
+{% extends 'training_django_app/base.html' %}
+
+{% block title %}{% if meal %}Редактировать приём пищи{% else %}Новый приём пищи{% endif %}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>{% if meal %}🍽️ Редактировать приём пищи{% else %}🍽️ Новый приём пищи{% endif %}</h2>
+    
+    <form method="post" id="mealForm">
+        {% csrf_token %}
+        
+        <div class="form-group">
+            <label>⏰ Время</label>
+            <input type="time" name="time" id="mealTime" class="form-control" step="60" required>
+        </div>
+    </form>
+    
+    <hr style="margin: 20px 0;">
+    
+    <!-- Поиск продуктов/блюд -->
+    <div class="search-box">
+        <h3>➕ Добавить продукт/блюдо</h3>
+        <input type="text" id="productSearch" class="form-control" placeholder="🔍 Найти продукт или блюдо...">
+        <div id="searchResults" class="search-results" style="display: none;"></div>
+    </div>
+    
+    <!-- Список добавленных продуктов/блюд -->
+    <h3 style="margin-top: 25px;">📋 Список</h3>
+    <div id="itemsList" style="margin-top: 15px;">
+        {% for item in items %}
+            <div class="meal-item" data-id="{{ item.id }}">
+                <div class="item-info">
+                    <strong>{{ item.food.name }}</strong>
+                    {% if item.food.is_dish %}
+                        <span class="dish-badge">блюдо</span>
+                    {% endif %}
+                    <span class="item-weight">{{ item.weight_grams }} г</span>
+                    <span class="item-nutrition">
+                        🥩{{ item.protein }}г | 🧈{{ item.fat }}г | 🍚{{ item.carb }}г | 🔥{{ item.calories|floatformat:0 }} ккал
+                    </span>
+                </div>
+                <div class="item-actions">
+                    <button class="btn-edit-weight" data-id="{{ item.id }}" data-weight="{{ item.weight_grams }}">✏️ Вес</button>
+                    <button class="btn-delete-item" data-id="{{ item.id }}">🗑️</button>
+                </div>
+            </div>
+        {% empty %}
+            <p class="text-muted">Нет добавленных продуктов</p>
+        {% endfor %}
+    </div>
+    
+    <!-- Итого -->
+    <div class="total-box">
+        <h3>📊 Итого</h3>
+        <div class="total-grid">
+            <div><strong>🥩 Белки:</strong> <span id="totalProtein">0</span> г</div>
+            <div><strong>🧈 Жиры:</strong> <span id="totalFat">0</span> г</div>
+            <div><strong>🍚 Углеводы:</strong> <span id="totalCarb">0</span> г</div>
+            <div><strong>🔥 Калории:</strong> <span id="totalCalories">0</span> ккал</div>
+        </div>
+    </div>
+    
+    <!-- КНОПКИ ВНИЗУ -->
+    <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button type="button" id="saveAllBtn" class="btn btn-primary" style="flex: 1;">💾 Сохранить</button>
+        <button type="button" id="cancelBtn" class="btn" style="background: #95a5a6; color: white; flex: 1;" onclick="window.location.href='{% url 'training_django_app:dashboard' %}'">❌ Отмена</button>
+    </div>
+</div>
+
+<script>
+    const mealId = {{ meal.id|default:'null' }};
+    const isNew = mealId === null;
+    
+    // ========== ПЕРЕМЕННЫЕ ==========
+    let productsList = [];
+    let currentOffset = 0;
+    let isLoading = false;
+    let hasMore = true;
+    let currentQuery = '';
+    let searchTimeout;
+    
+    // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+    function getCSRFToken() {
+        const cookieValue = document.cookie
+            .split('; ')
+            .find(row => row.startsWith('csrftoken='));
+        return cookieValue ? cookieValue.split('=')[1] : '';
+    }
+    
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // ========== ЗАКРЫТИЕ СПИСКА ПОИСКА ==========
+    function closeSearchResults() {
+        const resultsDiv = document.getElementById('searchResults');
+        if (resultsDiv) {
+            resultsDiv.style.display = 'none';
+        }
+        const searchInput = document.getElementById('productSearch');
+        if (searchInput) {
+            searchInput.value = '';
+            currentQuery = '';
+        }
+    }
+    
+    // ========== УСТАНОВКА ТЕКУЩЕГО ВРЕМЕНИ ==========
+    const now = new Date();
+    const hours = now.getHours().toString().padStart(2, '0');
+    const minutes = now.getMinutes().toString().padStart(2, '0');
+    const timeInput = document.getElementById('mealTime');
+    if (timeInput) {
+        timeInput.value = `${hours}:${minutes}`;
+    }
+    
+    // ========== ОБНОВЛЕНИЕ ИТОГОВ ==========
+    function updateTotals() {
+        if (isNew) {
+            const items = document.querySelectorAll('.meal-item[data-product-id]');
+            let protein = 0, fat = 0, carb = 0, calories = 0;
+            items.forEach(item => {
+                const nutritionText = item.querySelector('.item-nutrition').innerText;
+                protein += parseFloat(nutritionText.match(/🥩([\d.]+)/)?.[1] || 0);
+                fat += parseFloat(nutritionText.match(/🧈([\d.]+)/)?.[1] || 0);
+                carb += parseFloat(nutritionText.match(/🍚([\d.]+)/)?.[1] || 0);
+                calories += parseFloat(nutritionText.match(/🔥([\d.]+)/)?.[1] || 0);
+            });
+            document.getElementById('totalProtein').textContent = protein.toFixed(1);
+            document.getElementById('totalFat').textContent = fat.toFixed(1);
+            document.getElementById('totalCarb').textContent = carb.toFixed(1);
+            document.getElementById('totalCalories').textContent = Math.round(calories);
+            return;
+        }
+        
+        fetch(`/api/meal/${mealId}/totals/`)
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('totalProtein').textContent = data.protein;
+                document.getElementById('totalFat').textContent = data.fat;
+                document.getElementById('totalCarb').textContent = data.carb;
+                document.getElementById('totalCalories').textContent = data.calories;
+            });
+    }
+    
+    // ========== ОТРИСОВКА СПИСКА ПРОДУКТОВ ==========
+    function renderProductsList() {
+        const resultsDiv = document.getElementById('searchResults');
+        
+        if (productsList.length === 0) {
+            resultsDiv.innerHTML = '<div class="search-result-item">Ничего не найдено</div>';
+            return;
+        }
+        
+        resultsDiv.innerHTML = productsList.map(p => `
+            <div class="search-result-item" data-id="${p.id}" data-name="${escapeHtml(p.name)}" data-protein="${p.protein}" data-fat="${p.fat}" data-carb="${p.carb}" data-calories="${p.calories}" data-is-dish="${p.is_dish}">
+                <strong>${escapeHtml(p.name)}</strong>
+                ${p.is_dish ? '<span class="dish-badge">блюдо</span>' : ''}
+                <div class="search-result-macros">🥩${p.protein}г 🧈${p.fat}г 🍚${p.carb}г 🔥${p.calories} ккал/100г</div>
+            </div>
+        `).join('');
+        
+        document.querySelectorAll('.search-result-item').forEach(el => {
+            if (el.dataset.id) {
+                el.addEventListener('click', () => addProductToMeal(el));
+            }
+        });
+    }
+    
+    // ========== ЗАГРУЗКА ПРОДУКТОВ С ПАГИНАЦИЕЙ ==========
+    function loadProducts(reset = true) {
+        if (isLoading) return;
+        
+        if (reset) {
+            currentOffset = 0;
+            productsList = [];
+            hasMore = true;
+            document.getElementById('searchResults').innerHTML = '<div class="search-result-item">Загрузка...</div>';
+        }
+        
+        if (!hasMore) return;
+        
+        isLoading = true;
+        
+        let url = `/api/user/products/?offset=${currentOffset}&limit=10`;
+        if (currentQuery) {
+            url += `&q=${encodeURIComponent(currentQuery)}`;
+        }
+        
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                if (reset) {
+                    productsList = data.items;
+                } else {
+                    productsList = [...productsList, ...data.items];
+                }
+                
+                renderProductsList();
+                
+                hasMore = data.has_more;
+                currentOffset += data.items.length;
+                isLoading = false;
+            })
+            .catch(error => {
+                console.error('Ошибка загрузки:', error);
+                isLoading = false;
+            });
+    }
+    
+    // ========== ДОБАВЛЕНИЕ ПРОДУКТА В ПРИЁМ ==========
+    function addProductToMeal(el) {
+        const weight = prompt('Введите вес в граммах:', 100);
+        if (!weight || weight <= 0) return;
+        
+        const productId = parseInt(el.dataset.id);
+        const productName = el.dataset.name;
+        const productProtein = parseFloat(el.dataset.protein);
+        const productFat = parseFloat(el.dataset.fat);
+        const productCarb = parseFloat(el.dataset.carb);
+        const productCalories = parseFloat(el.dataset.calories);
+        const isDish = el.dataset.is_dish === 'true';
+        
+        if (isNew) {
+            const factor = weight / 100;
+            const protein = (productProtein * factor).toFixed(1);
+            const fat = (productFat * factor).toFixed(1);
+            const carb = (productCarb * factor).toFixed(1);
+            const calories = Math.round(productCalories * factor);
+            
+            const itemsList = document.getElementById('itemsList');
+            const itemHtml = `
+                <div class="meal-item" data-product-id="${productId}" data-weight="${weight}">
+                    <div class="item-info">
+                        <strong>${escapeHtml(productName)}</strong>
+                        ${isDish ? '<span class="dish-badge">блюдо</span>' : ''}
+                        <span class="item-weight">${weight} г</span>
+                        <span class="item-nutrition">
+                            🥩${protein}г | 🧈${fat}г | 🍚${carb}г | 🔥${calories} ккал
+                        </span>
+                    </div>
+                    <div class="item-actions">
+                        <button class="btn-edit-weight-local" data-weight="${weight}">✏️ Вес</button>
+                        <button class="btn-delete-item-local">🗑️</button>
+                    </div>
+                </div>
+            `;
+            
+            if (itemsList.querySelector('.text-muted')) {
+                itemsList.innerHTML = itemHtml;
+            } else {
+                itemsList.insertAdjacentHTML('beforeend', itemHtml);
+            }
+            
+            const newItem = itemsList.lastElementChild;
+            newItem.querySelector('.btn-delete-item-local').addEventListener('click', function() {
+                newItem.remove();
+                if (itemsList.children.length === 0) {
+                    itemsList.innerHTML = '<p class="text-muted">Нет добавленных продуктов</p>';
+                }
+                updateTotals();
+            });
+            newItem.querySelector('.btn-edit-weight-local').addEventListener('click', function() {
+                const newWeight = prompt('Введите новый вес в граммах:', weight);
+                if (newWeight && newWeight > 0) {
+                    const factor = newWeight / 100;
+                    const newProtein = (productProtein * factor).toFixed(1);
+                    const newFat = (productFat * factor).toFixed(1);
+                    const newCarb = (productCarb * factor).toFixed(1);
+                    const newCalories = Math.round(productCalories * factor);
+                    
+                    newItem.querySelector('.item-weight').textContent = `${newWeight} г`;
+                    newItem.querySelector('.item-nutrition').innerHTML = `🥩${newProtein}г | 🧈${newFat}г | 🍚${newCarb}г | 🔥${newCalories} ккал`;
+                    newItem.dataset.weight = newWeight;
+                    updateTotals();
+                }
+            });
+            
+            updateTotals();
+        } else {
+            fetch('/api/meal/item/add/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    meal_id: mealId,
+                    product_id: productId,
+                    weight_grams: parseFloat(weight)
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Ошибка: ' + data.error);
+                }
+            });
+        }
+        
+        // ЗАКРЫВАЕМ СПИСОК ПОСЛЕ ВЫБОРА ПРОДУКТА
+        closeSearchResults();
+    }
+    
+    // ========== УДАЛЕНИЕ ПРОДУКТА (СУЩЕСТВУЮЩИЙ ПРИЁМ) ==========
+    document.querySelectorAll('.btn-delete-item').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const itemId = this.dataset.id;
+            if (confirm('Удалить продукт из приёма?')) {
+                fetch(`/api/meal/item/${itemId}/delete/`, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': getCSRFToken()
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        window.location.reload();
+                    }
+                });
+            }
+        });
+    });
+    
+    // ========== ИЗМЕНЕНИЕ ВЕСА (СУЩЕСТВУЮЩИЙ ПРИЁМ) ==========
+    document.querySelectorAll('.btn-edit-weight').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const itemId = this.dataset.id;
+            const currentWeight = this.dataset.weight;
+            const newWeight = prompt('Введите новый вес в граммах:', currentWeight);
+            if (newWeight && newWeight > 0 && newWeight !== currentWeight) {
+                fetch(`/api/meal/item/${itemId}/update/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCSRFToken()
+                    },
+                    body: JSON.stringify({ weight_grams: parseFloat(newWeight) })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        window.location.reload();
+                    } else {
+                        alert('Ошибка: ' + data.error);
+                    }
+                });
+            }
+        });
+    });
+    
+    // ========== ПОИСК И БЕСКОНЕЧНЫЙ СКРОЛЛ ==========
+    const searchInput = document.getElementById('productSearch');
+    const resultsDiv = document.getElementById('searchResults');
+    
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            currentQuery = this.value.trim();
+            
+            searchTimeout = setTimeout(() => {
+                resultsDiv.style.display = 'block';
+                loadProducts(true);
+            }, 300);
+        });
+        
+        searchInput.addEventListener('focus', function() {
+            if (productsList.length === 0 && !isLoading) {
+                resultsDiv.style.display = 'block';
+                loadProducts(true);
+            } else {
+                resultsDiv.style.display = 'block';
+            }
+        });
+        
+        resultsDiv.addEventListener('scroll', function() {
+            if (resultsDiv.scrollTop + resultsDiv.clientHeight >= resultsDiv.scrollHeight - 50) {
+                if (hasMore && !isLoading) {
+                    loadProducts(false);
+                }
+            }
+        });
+        
+        document.addEventListener('click', function(e) {
+            if (!searchInput.contains(e.target) && !resultsDiv.contains(e.target)) {
+                resultsDiv.style.display = 'none';
+            }
+        });
+    }
+    
+    // ========== СОХРАНЕНИЕ ПРИЁМА (КНОПКА) ==========
+    document.getElementById('saveAllBtn').addEventListener('click', function() {
+        if (isNew) {
+            const time = document.getElementById('mealTime').value;
+            const items = document.querySelectorAll('.meal-item[data-product-id]');
+            
+            if (items.length === 0) {
+                alert('Добавьте хотя бы один продукт');
+                return;
+            }
+            
+            const products = [];
+            items.forEach(item => {
+                products.push({
+                    product_id: parseInt(item.dataset.productId),
+                    weight_grams: parseFloat(item.dataset.weight)
+                });
+            });
+            
+            // Получаем текущую дату в формате YYYY-MM-DD из браузера
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            const localDate = `${year}-${month}-${day}`;
+            
+            fetch('/api/meal/save/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    date: localDate,
+                    time: time,
+                    items: products
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/';
+                } else {
+                    alert('Ошибка: ' + data.error);
+                }
+            });
+        } else {
+            const time = document.getElementById('mealTime').value;
+            fetch(`/api/meal/${mealId}/update_time/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({ time: time })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/';
+                } else {
+                    alert('Ошибка: ' + data.error);
+                }
+            });
+        }
+    });
+    
+    // ========== ИНИЦИАЛИЗАЦИЯ ==========
+    updateTotals();
+</script>
+
+<style>
+    .card {
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    .form-group {
+        margin-bottom: 15px;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    .form-group input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+    }
+    .search-box {
+        position: relative;
+        margin: 15px 0;
+    }
+    .search-results {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        max-height: 300px;
+        overflow-y: auto;
+        z-index: 100;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .search-result-item {
+        padding: 10px;
+        border-bottom: 1px solid #eee;
+        cursor: pointer;
+    }
+    .search-result-item:hover {
+        background: #f5f5f5;
+    }
+    .search-result-macros {
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 5px;
+    }
+    .dish-badge {
+        background: #8e44ad;
+        color: white;
+        font-size: 0.7rem;
+        padding: 2px 6px;
+        border-radius: 10px;
+        margin-left: 8px;
+    }
+    .meal-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px;
+        background: #f8f9fa;
+        border-radius: 8px;
+        margin-bottom: 8px;
+    }
+    .item-info {
+        flex: 1;
+    }
+    .item-weight {
+        font-size: 0.8rem;
+        color: #666;
+        margin-left: 10px;
+    }
+    .item-nutrition {
+        font-size: 0.75rem;
+        color: #888;
+        margin-left: 10px;
+    }
+    .item-actions {
+        display: flex;
+        gap: 8px;
+    }
+    .btn-edit-weight, .btn-delete-item, .btn-edit-weight-local, .btn-delete-item-local {
+        padding: 5px 10px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+    .btn-edit-weight, .btn-edit-weight-local {
+        background: #3498db;
+        color: white;
+    }
+    .btn-delete-item, .btn-delete-item-local {
+        background: #e74c3c;
+        color: white;
+    }
+    .total-box {
+        margin-top: 20px;
+        padding: 15px;
+        background: #e8f8f5;
+        border-radius: 10px;
+    }
+    .total-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+        margin-top: 10px;
+        text-align: center;
+    }
+    .text-muted {
+        text-align: center;
+        padding: 20px;
+        color: #888;
+    }
+    .btn {
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+        padding: 10px 15px;
+        border-radius: 5px;
+        font-size: 1rem;
+        text-align: center;
+    }
+    .btn-primary {
+        background: #27ae60;
+        color: white;
+    }
+</style>
+{% endblock %}
