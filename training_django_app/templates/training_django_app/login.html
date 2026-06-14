@@ -24,7 +24,12 @@
     </form>
     
     <p style="margin-top: 15px; text-align: center;">
+        <a href="{% url 'password_reset' %}">Забыли пароль?</a>
+    </p>
+
+    <p style="margin-top: 15px; text-align: center;">
         Нет аккаунта? <a href="{% url 'training_django_app:register' %}">Зарегистрироваться</a>
     </p>
 </div>
 {% endblock %}
+

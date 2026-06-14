@@ -57,7 +57,7 @@ ROOT_URLCONF = 'training_django.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -132,3 +132,11 @@ STATICFILES_DIRS = [
 LOGIN_URL = 'training_django_app:login'
 LOGIN_REDIRECT_URL = 'training_django_app:dashboard'
 LOGOUT_REDIRECT_URL = 'training_django_app:login'
+
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.yandex.ru'
+EMAIL_PORT = 465
+EMAIL_USE_SSL = True
+EMAIL_HOST_USER = 'MyFitTracker@yandex.ru'      # Например: fittracker@yandex.ru
+EMAIL_HOST_PASSWORD = 'gqlzlwrvyvxznerj' # Пароль приложения
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
