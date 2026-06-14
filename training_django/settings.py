@@ -124,6 +124,9 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+STATICFILES_DIRS = [
+    BASE_DIR /'training_django_app'/ 'static',
+]
 
 # Настройки аутентификации
 LOGIN_URL = 'training_django_app:login'

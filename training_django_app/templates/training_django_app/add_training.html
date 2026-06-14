@@ -1,0 +1,398 @@
+{% extends 'training_django_app/base.html' %}
+
+{% block title %}Добавить тренировку{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    <h2>Добавить тренировку</h2>
+    
+    <form method="post" id="trainingForm">
+        {% csrf_token %}
+        
+        <div class="form-group">
+            <label>Время</label>
+            <input type="time" name="time" id="trainingTime" class="form-control" step="60" required>
+        </div>
+        
+        <div class="form-group">
+            <label>Упражнение</label>
+            <input type="text" id="exerciseSearch" class="form-control" placeholder="Найти упражнение...">
+            <div id="searchResults" class="search-results" style="display: none;"></div>
+            <input type="hidden" id="selectedExerciseId" name="exercise_id">
+            <div id="selectedExerciseInfo" class="selected-info" style="display: none;">
+                <strong>Выбрано:</strong> <span id="selectedExerciseName"></span>
+                <span id="selectedExerciseCalories" class="text-muted" style="font-size: 0.8rem;"></span>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label>Длительность (минуты)</label>
+            <input type="number" name="duration" id="duration" class="form-control" step="1" min="1" value="30" required>
+        </div>
+        
+        <div class="calories-result">
+            <strong>🔥 Сожжено калорий:</strong> <span id="caloriesBurned">0</span>
+        </div>
+        
+        <div class="action-buttons" style="margin-top: 20px;">
+            <button type="submit" id="saveBtn" class="btn btn-primary" disabled>Сохранить</button>
+            <button type="button" class="btn btn-secondary" onclick="window.location.href='{% url 'training_django_app:dashboard' %}'">Отмена</button>
+        </div>
+    </form>
+</div>
+
+<script>
+    // CSRF токен
+    function getCSRFToken() {
+        const cookieValue = document.cookie
+            .split('; ')
+            .find(row => row.startsWith('csrftoken='));
+        return cookieValue ? cookieValue.split('=')[1] : '';
+    }
+    
+    // ========== УСТАНОВКА ТЕКУЩЕГО ВРЕМЕНИ ==========
+    const now = new Date();
+    const hours = now.getHours().toString().padStart(2, '0');
+    const minutes = now.getMinutes().toString().padStart(2, '0');
+    const timeInput = document.getElementById('trainingTime');
+    if (timeInput) {
+        timeInput.value = `${hours}:${minutes}`;
+    }
+    
+    // ========== ПЕРЕМЕННЫЕ ==========
+    let exercisesList = [];
+    let currentOffset = 0;
+    let isLoading = false;
+    let hasMore = true;
+    let currentQuery = '';
+    let searchTimeout;
+    let selectedExercise = null;
+    
+    // ========== ВЕС ПОЛЬЗОВАТЕЛЯ ==========
+    const userWeight = {{ user.profile.weight|default:70 }};
+    
+    // ========== ЗАКРЫТИЕ СПИСКА ==========
+    function closeSearchResults() {
+        const resultsDiv = document.getElementById('searchResults');
+        if (resultsDiv) {
+            resultsDiv.style.display = 'none';
+        }
+    }
+    
+    // ========== ЗАГРУЗКА УПРАЖНЕНИЙ ==========
+    function loadExercises(reset = true) {
+        if (isLoading) return;
+        
+        if (reset) {
+            currentOffset = 0;
+            exercisesList = [];
+            hasMore = true;
+            document.getElementById('searchResults').innerHTML = '<div class="search-result-item">Загрузка...</div>';
+        }
+        
+        if (!hasMore) return;
+        
+        isLoading = true;
+        
+        let url = `/api/exercises/search/?offset=${currentOffset}&limit=10`;
+        if (currentQuery) {
+            url += `&q=${encodeURIComponent(currentQuery)}`;
+        }
+        
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                if (reset) {
+                    exercisesList = data.items || data;
+                    if (!Array.isArray(exercisesList)) exercisesList = [];
+                } else {
+                    exercisesList = [...exercisesList, ...(data.items || data)];
+                }
+                
+                renderExercisesList();
+                
+                hasMore = data.has_more || false;
+                currentOffset += (data.items || data).length;
+                isLoading = false;
+            })
+            .catch(error => {
+                console.error('Ошибка загрузки:', error);
+                isLoading = false;
+            });
+    }
+    
+    // ========== ОТРИСОВКА СПИСКА ==========
+    function renderExercisesList() {
+        const resultsDiv = document.getElementById('searchResults');
+        
+        if (exercisesList.length === 0) {
+            resultsDiv.innerHTML = '<div class="search-result-item">Ничего не найдено</div>';
+            return;
+        }
+        
+        resultsDiv.innerHTML = exercisesList.map(e => `
+            <div class="search-result-item" data-id="${e.id}" data-name="${escapeHtml(e.name)}" data-met="${e.met || ''}" data-calories-per-hour="${e.calories_per_hour || ''}">
+                <strong>${escapeHtml(e.name)}</strong>
+                <div class="search-result-macros">
+                    ${e.met ? `🔥 MET: ${e.met}` : ''}
+                    ${e.calories_per_hour ? ` 📊 ${e.calories_per_hour} ккал/час` : ''}
+                </div>
+            </div>
+        `).join('');
+        
+        document.querySelectorAll('.search-result-item').forEach(el => {
+            if (el.dataset.id) {
+                el.addEventListener('click', () => {
+                    selectedExercise = {
+                        id: parseInt(el.dataset.id),
+                        name: el.dataset.name,
+                        met: el.dataset.met ? parseFloat(el.dataset.met) : null,
+                        calories_per_hour: el.dataset.caloriesPerHour ? parseFloat(el.dataset.caloriesPerHour) : null
+                    };
+                    
+                    document.getElementById('selectedExerciseId').value = selectedExercise.id;
+                    document.getElementById('selectedExerciseName').textContent = selectedExercise.name;
+                    
+                    let infoText = '';
+                    if (selectedExercise.met) {
+                        infoText = `🔥 MET: ${selectedExercise.met}`;
+                    }
+                    if (selectedExercise.calories_per_hour) {
+                        if (infoText) infoText += ' | ';
+                        infoText += `📊 ${selectedExercise.calories_per_hour} ккал/час`;
+                    }
+                    document.getElementById('selectedExerciseCalories').textContent = infoText;
+                    
+                    document.getElementById('selectedExerciseInfo').style.display = 'block';
+                    closeSearchResults();
+                    document.getElementById('exerciseSearch').value = selectedExercise.name;
+                    
+                    calculateCalories();
+                    updateSaveButton();
+                });
+            }
+        });
+    }
+    
+    // ========== РАСЧЁТ КАЛОРИЙ ==========
+    function calculateCalories() {
+        if (!selectedExercise) {
+            document.getElementById('caloriesBurned').textContent = '0';
+            return;
+        }
+        
+        const duration = parseFloat(document.getElementById('duration').value) || 0;
+        const hours = duration / 60;
+        let calories = 0;
+        
+        if (selectedExercise.met) {
+            // Расчёт через MET с учётом BMR
+            const userBMR = {{ user.profile.bmr|default:1750 }};
+            const bmrPerHour = userBMR / 24;
+            calories = Math.round(selectedExercise.met * bmrPerHour * hours);
+        } else if (selectedExercise.calories_per_hour) {
+            calories = Math.round(selectedExercise.calories_per_hour * hours);
+        }
+        
+        document.getElementById('caloriesBurned').textContent = calories;
+        return calories;
+    }
+    
+    function updateSaveButton() {
+        const saveBtn = document.getElementById('saveBtn');
+        saveBtn.disabled = !selectedExercise || !document.getElementById('duration').value;
+    }
+    
+    // ========== ПОИСК ==========
+    const searchInput = document.getElementById('exerciseSearch');
+    const resultsDiv = document.getElementById('searchResults');
+    
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            currentQuery = this.value.trim();
+            
+            searchTimeout = setTimeout(() => {
+                resultsDiv.style.display = 'block';
+                loadExercises(true);
+            }, 300);
+        });
+        
+        searchInput.addEventListener('focus', function() {
+            if (exercisesList.length === 0 && !isLoading) {
+                resultsDiv.style.display = 'block';
+                loadExercises(true);
+            } else if (exercisesList.length > 0) {
+                resultsDiv.style.display = 'block';
+                renderExercisesList();
+            }
+        });
+        
+        resultsDiv.addEventListener('scroll', function() {
+            if (resultsDiv.scrollTop + resultsDiv.clientHeight >= resultsDiv.scrollHeight - 50) {
+                if (hasMore && !isLoading) {
+                    loadExercises(false);
+                }
+            }
+        });
+        
+        document.addEventListener('click', function(e) {
+            if (!searchInput.contains(e.target) && !resultsDiv.contains(e.target)) {
+                resultsDiv.style.display = 'none';
+            }
+        });
+    }
+    
+    // ========== ДЛИТЕЛЬНОСТЬ ==========
+    const durationInput = document.getElementById('duration');
+    durationInput.addEventListener('input', function() {
+        calculateCalories();
+        updateSaveButton();
+    });
+    
+    // ========== СОХРАНЕНИЕ ==========
+    document.getElementById('trainingForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        if (!selectedExercise) {
+            alert('Выберите упражнение');
+            return;
+        }
+        
+        const data = {
+            exercise_id: selectedExercise.id,
+            time: document.getElementById('trainingTime').value,
+            duration_minutes: parseInt(durationInput.value)
+        };
+        
+        fetch('/api/training/save/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken()
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.location.href = '/';
+            } else {
+                alert('Ошибка: ' + data.error);
+            }
+        });
+    });
+    
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+</script>
+
+<style>
+    .card {
+        max-width: 600px;
+        margin: 0 auto;
+    }
+    
+    .form-group {
+        margin-bottom: 15px;
+        position: relative;
+    }
+    
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    
+    .form-group input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        background: var(--bg-light);
+        color: var(--text-light);
+    }
+    
+    .search-results {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        max-height: 300px;
+        overflow-y: auto;
+        z-index: 100;
+        box-shadow: var(--shadow);
+    }
+    
+    .search-result-item {
+        padding: 10px;
+        border-bottom: 1px solid var(--border);
+        cursor: pointer;
+        background: var(--bg-light);
+        color: var(--text-light);
+    }
+    
+    .search-result-item:hover {
+        background: var(--bg-hover);
+    }
+    
+    .search-result-macros {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        margin-top: 5px;
+    }
+    
+    .selected-info {
+        margin-top: 10px;
+        padding: 10px;
+        background: var(--bg-dark);
+        border-radius: 8px;
+        border: 1px solid var(--border);
+    }
+    
+    .selected-info strong {
+        color: var(--text-light);
+    }
+    
+    .text-muted {
+        color: var(--text-muted);
+    }
+    
+    .calories-result {
+        margin-top: 15px;
+        padding: 10px;
+        background: var(--bg-dark);
+        border-radius: 8px;
+        text-align: center;
+        font-size: 1rem;
+        border: 1px solid var(--border);
+    }
+    
+    .calories-result span {
+        font-weight: bold;
+        color: var(--accent);
+        font-size: 1.3rem;
+        margin-left: 8px;
+    }
+    
+    .action-buttons {
+        display: flex;
+        gap: 10px;
+    }
+    
+    .action-buttons .btn {
+        flex: 1;
+    }
+    
+    .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+</style>
+{% endblock %}

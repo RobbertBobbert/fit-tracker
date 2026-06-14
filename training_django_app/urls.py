@@ -24,16 +24,20 @@ urlpatterns = [
     path('api/dish/save/', views.api_save_dish, name='api_save_dish'),
     path('api/user/products/', views.api_search_user_products, name='api_user_products'),
     path('api/toggle_custom_targets/', views.api_toggle_custom_targets, name='api_toggle_custom_targets'),
-    
+    path('api/dashboard/totals/', views.api_dashboard_totals, name='api_dashboard_totals'),
+
     #Спорт
     path('catalogue/exercise/add/', views.exercise_form, name='add_exercise'),
     path('catalogue/exercise/<int:exercise_id>/edit/', views.exercise_form, name='edit_exercise'),
     path('catalogue/exercise/<int:exercise_id>/delete/', views.delete_exercise, name='delete_exercise'),
-    path('api/exercises/search/', views.api_search_exercises, name='api_search_exercises'),
     path('training/add/', views.add_training, name='add_training'),
 
-    # Добавление еды на дашборд
-    
+    # API спорт
+    path('api/exercises/search/', views.api_search_exercises, name='api_search_exercises'),
+    path('api/training/save/', views.api_training_save, name='api_training_save'),
+    path('training/<int:training_id>/edit/', views.edit_training, name='edit_training'),
+    path('api/training/<int:training_id>/delete/', views.api_delete_training, name='api_delete_training'),
+    path('api/training/<int:training_id>/update/', views.api_update_training, name='api_update_training'),
 
     # API для приёмов пищи
     path('meal/', views.meal_form, name='meal_form'),
