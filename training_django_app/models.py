@@ -160,7 +160,8 @@ class UserProfile(models.Model):
     @property
     def bmi(self):
         # Индекс массы тела (ИМТ)
-        if self.height > 0:
+        # Проверяем, что рост не None и больше 0
+        if self.height is not None and self.height > 0:
             height_m = self.height / 100
             return round(self.weight / (height_m ** 2), 1)
         return 0

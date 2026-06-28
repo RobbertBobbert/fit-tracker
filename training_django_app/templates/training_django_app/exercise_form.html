@@ -23,11 +23,9 @@
             </div>
         {% endfor %}
         
-        <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <div class="action-buttons">
             <button type="submit" class="btn btn-primary">{{ submit_text }}</button>
-            <a href="{% url 'training_django_app:profile' %}" class="btn" style="background: #95a5a6; color: white;">
-                ❌ Отмена
-            </a>
+            <a href="{% url 'training_django_app:profile' %}" class="btn btn-secondary">Отмена</a>
         </div>
     </form>
 </div>
