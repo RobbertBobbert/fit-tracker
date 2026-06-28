@@ -4,7 +4,7 @@ from .models import (
     exercise_catalogue, ExerciseRecord, Meal, MealItem, DailyTarget
 )
 
-# ========== ПОЛЬЗОВАТЕЛИ И ПРОФИЛИ ==========
+# ПОЛЬЗОВАТЕЛИ И ПРОФИЛИ
 @admin.register(app_user)
 class AppUserAdmin(admin.ModelAdmin):
     list_display = ('username', 'email', 'full_name', 'birth_date', 'gender', 'is_active', 'date_joined')
@@ -49,7 +49,7 @@ class UserProfileAdmin(admin.ModelAdmin):
     )
 
 
-# ========== КАТАЛОГ (ПРОДУКТЫ И БЛЮДА) ==========
+# КАТАЛОГ (ПРОДУКТЫ И БЛЮДА)
 @admin.register(food_catalogue)
 class FoodCatalogueAdmin(admin.ModelAdmin):
     list_display = ('name', 'is_dish', 'created_by', 'protein', 'carb', 'fat', 'calories', 'created_at', 'last_used')
@@ -84,7 +84,7 @@ class FoodCatalogueIngredientAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related('dish', 'ingredient')
 
 
-# ========== УПРАЖНЕНИЯ ==========
+# УПРАЖНЕНИЯ
 @admin.register(exercise_catalogue)
 class ExerciseCatalogueAdmin(admin.ModelAdmin):
     list_display = ('name', 'created_by', 'met', 'calories_per_hour', 'is_shared', 'created_at')
@@ -116,7 +116,7 @@ class ExerciseRecordAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related('user', 'exercise')
 
 
-# ========== ПРИЁМЫ ПИЩИ ==========
+# ПРИЁМЫ ПИЩИ
 @admin.register(Meal)
 class MealAdmin(admin.ModelAdmin):
     list_display = ('user', 'date', 'time', 'created_at', 'total_calories')
@@ -144,7 +144,7 @@ class MealItemAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related('meal', 'meal__user', 'food')
 
 
-# ========== ДНЕВНЫЕ ЦЕЛИ ==========
+# ДНЕВНЫЕ ЦЕЛИ
 @admin.register(DailyTarget)
 class DailyTargetAdmin(admin.ModelAdmin):
     list_display = ('user', 'date', 'calories', 'protein', 'fat', 'carb', 'is_custom')
